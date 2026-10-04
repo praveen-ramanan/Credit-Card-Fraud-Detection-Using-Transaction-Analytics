@@ -1,0 +1,29 @@
+# Core data handling
+pandas>=2.0.0
+numpy>=1.24.0
+pyarrow>=14.0.0            # Parquet engine for pandas + Spark interop
+
+# Machine learning
+scikit-learn>=1.3.0
+imbalanced-learn>=0.11.0
+xgboost>=2.0.0
+
+# Big Data processing
+pyspark>=3.5.0
+
+# NoSQL
+pymongo>=4.6.0
+mongomock>=4.1.0          # zero-install local fallback for MongoDB demo
+
+# Visualization
+matplotlib>=3.7.0
+seaborn>=0.12.0
+plotly>=5.18.0
+
+# Utilities
+pyyaml>=6.0
+joblib>=1.3.0
+tqdm>=4.66.0
+
+# Testing
+pytest>=7.4.0

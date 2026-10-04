@@ -1,0 +1,15 @@
+category,txn_count,total_amount,fraud_count,avg_amount
+shopping_net,12476,554036.2,281,44.41
+misc_net,12541,543767.45,275,43.36
+grocery_net,8855,380324.97,175,42.95
+travel,4970,218276.8,108,43.92
+grocery_pos,13821,565205.4,53,40.89
+food_dining,12654,516728.76,52,40.84
+home,13566,556560.84,52,41.03
+kids_pets,13781,562451.45,45,40.81
+personal_care,13846,569741.94,40,41.15
+entertainment,9798,399384.16,34,40.76
+health_fitness,10147,412395.4,32,40.64
+shopping_pos,8618,359449.0,30,41.71
+gas_transport,9941,393654.46,28,39.6
+misc_pos,4986,204563.98,14,41.03
