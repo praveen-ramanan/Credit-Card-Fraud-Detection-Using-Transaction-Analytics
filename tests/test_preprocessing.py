@@ -17,20 +17,20 @@ def _minimal_raw_df():
                                     "2024-01-01 11:00:00", "2024-01-02 02:00:00"],
         "unix_time": [1, 2, 2, 3],
         "cc_num": [111, 222, 222, 333],
-        "merchant": ["A", "B", "B", None],
+        "merchant": ["fraud_A", "fraud_B", "fraud_B", None],
         "category": ["grocery_pos", "travel", "travel", "misc_net"],
         "amt": [50.0, -5.0, 200.0, 700.0],
         "first": ["A", "B", "B", "C"], "last": ["X", "Y", "Y", "Z"],
         "gender": ["M", "F", "F", "M"],
-        "city": ["Pune", "Chennai", "Chennai", "Mumbai"],
-        "state": ["MH", "TN", "TN", "MH"],
+        "city": ["Columbus", "Houston", "Houston", "Albany"],
+        "state": ["OH", "TX", "TX", "NY"],
         "zip": [1, 2, 2, 3],
-        "lat": [18.5, 13.0, 13.0, 19.0], "long": [73.8, 80.2, 80.2, 72.8],
+        "lat": [39.96, 29.76, 29.76, 42.65], "long": [-83.0, -95.37, -95.37, -73.76],
         "city_pop": [100000, 200000, 200000, 500000],
         "job": ["Eng", "Doc", "Doc", "Teacher"],
         "dob": ["1990-01-01", "1985-05-05", "1985-05-05", "2000-01-01"],
         "trans_num": ["t1", "t2", "t2", "t4"],
-        "merch_lat": [18.6, 13.1, 13.1, 19.1], "merch_long": [73.9, 80.3, 80.3, 72.9],
+        "merch_lat": [40.0, 29.8, 29.8, 42.7], "merch_long": [-83.1, -95.4, -95.4, -73.8],
         "is_fraud": [0, 0, 0, 1],
     })
 
@@ -50,6 +50,28 @@ def test_clean_fills_missing_categoricals():
     assert "unknown" in result["merchant"].values
 
 
+def test_clean_strips_sparkov_merchant_prefix():
+    result = clean(_minimal_raw_df())
+    assert "A" in result["merchant"].values
+    assert not result["merchant"].str.startswith("fraud_").any()
+
+
+def test_load_raw_drops_unnamed_index_column(tmp_path):
+    from src.preprocessing.clean_data import load_raw
+    path = tmp_path / "mini.csv"
+    _minimal_raw_df().to_csv(path)  # writes the unnamed leading index column, like the Kaggle files
+    df = load_raw(path)
+    assert not [c for c in df.columns if c == "" or str(c).startswith("Unnamed")]
+    assert len(df) == 4
+
+
+def test_load_raw_missing_file_raises(tmp_path):
+    import pytest
+    from src.preprocessing.clean_data import load_raw
+    with pytest.raises(FileNotFoundError, match="BDA_TRAIN_CSV"):
+        load_raw(tmp_path / "nope.csv")
+
+
 def test_clean_derives_expected_columns():
     df = _minimal_raw_df()
     result = clean(df)
@@ -64,6 +86,6 @@ def test_haversine_zero_distance_for_same_point():
 
 
 def test_haversine_known_distance_order_of_magnitude():
-    # Mumbai (~19.07, 72.87) to Pune (~18.52, 73.85) is roughly 120-150 km
-    d = _haversine_km(np.array([19.07]), np.array([72.87]), np.array([18.52]), np.array([73.85]))
-    assert 80 < d[0] < 200
+    # New York (~40.71, -74.01) to Philadelphia (~39.95, -75.17) is roughly 130 km
+    d = _haversine_km(np.array([40.71]), np.array([-74.01]), np.array([39.95]), np.array([-75.17]))
+    assert 100 < d[0] < 160

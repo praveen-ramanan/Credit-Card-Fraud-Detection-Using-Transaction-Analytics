@@ -6,7 +6,7 @@ Real HiveQL scripts under `src/hive/hql/`:
 
 - `create_tables.hql` - creates an external Hive table over the cleaned
   transaction data on HDFS.
-- `analytics_queries.hql` - ten analytics queries: totals, fraud vs
+- `analytics_queries.hql` - eleven analytics queries: totals, fraud vs
   legitimate breakdown, fraud amount share, category-level fraud rates,
   highest-value transactions, high-value fraud-rate comparison, hourly
   pattern, state distribution, top customers, top merchants by fraud

@@ -80,24 +80,27 @@ From the WSL2 shell, with this project accessible under `/mnt/d/PROJECTS/BDA`:
 
 ```bash
 hdfs dfs -mkdir -p /user/bda/data/raw
-hdfs dfs -mkdir -p /user/bda/data/processed
+hdfs dfs -mkdir -p /user/bda/data/processed/transactions_clean
 
-hdfs dfs -put /mnt/d/PROJECTS/BDA/data/raw/transactions.csv /user/bda/data/raw/
-hdfs dfs -put /mnt/d/PROJECTS/BDA/data/processed/transactions_clean.csv /user/bda/data/processed/
+# Raw Kaggle files (read in place from Windows Downloads; adjust the path)
+hdfs dfs -put "/mnt/c/Users/<you>/Downloads/archive (5)/fraudTrain.csv" /user/bda/data/raw/
+hdfs dfs -put "/mnt/c/Users/<you>/Downloads/archive (5)/fraudTest.csv" /user/bda/data/raw/
+# Cleaned Parquet produced by src/preprocessing/clean_data.py
+hdfs dfs -put /mnt/d/PROJECTS/BDA/data/processed/transactions_clean.parquet /user/bda/data/processed/transactions_clean/
 
 # Verify
 hdfs dfs -ls /user/bda/data/raw
-hdfs dfs -ls /user/bda/data/processed
+hdfs dfs -ls /user/bda/data/processed/transactions_clean
 hdfs dfs -du -h /user/bda/data
-hdfs dfs -cat /user/bda/data/raw/transactions.csv | head -5
+hdfs dfs -cat /user/bda/data/raw/fraudTrain.csv | head -5
 ```
 
 (Equivalent commands are collected in `scripts/hdfs_ingest.sh`.)
 
 ### 5. Point Hive/MapReduce Streaming at HDFS
 
-- `src/hive/hql/create_tables.hql` already expects the cleaned CSV at
-  `/user/bda/data/processed/transactions_clean` on HDFS.
+- `src/hive/hql/create_tables.hql` already expects the cleaned Parquet at
+  `/user/bda/data/processed/transactions_clean` on HDFS (`STORED AS PARQUET`).
 - For MapReduce on a real cluster, submit via Hadoop Streaming pointing
   `-input` at the HDFS path instead of a local file (see
   `docs/MAPREDUCE_SETUP.md`).

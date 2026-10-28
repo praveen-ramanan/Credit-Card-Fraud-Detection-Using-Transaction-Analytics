@@ -1,9 +1,11 @@
 """
 Generates the project's core analytics charts as PNG files under
-results/figures/. Reads the cleaned dataset (and the fraud-scored dataset,
-if available) produced by earlier pipeline stages - run
-src/preprocessing/clean_data.py and src/fraud_detection/train_model.py
-first.
+results/figures/. Reads the cleaned Kaggle dataset (fraudTrain.csv +
+fraudTest.csv rows) and the model metrics produced by earlier pipeline
+stages - run src/preprocessing/clean_data.py and
+src/fraud_detection/train_model.py first. Charts 01-07 describe all labelled
+transactions; 08 is the final fraudTest.csv evaluation and 09 the
+validation-set model comparison.
 """
 
 import sys
@@ -37,9 +39,9 @@ def load_data():
             f"{cfg.CLEANED_TRANSACTIONS_FILE} not found. Run "
             f"'python src/preprocessing/clean_data.py' first."
         )
-    df = pd.read_parquet(cfg.CLEANED_TRANSACTIONS_FILE)
-    df[cfg.TIMESTAMP_COL] = pd.to_datetime(df[cfg.TIMESTAMP_COL])
-    return df
+    columns = [cfg.TIMESTAMP_COL, cfg.AMOUNT_COL, cfg.CATEGORY_COL, cfg.MERCHANT_COL, cfg.LABEL_COL,
+               "txn_hour", "is_high_value"]
+    return pd.read_parquet(cfg.CLEANED_TRANSACTIONS_FILE, columns=columns)
 
 
 def plot_fraud_vs_legit_count(df):
@@ -144,8 +146,8 @@ def plot_model_evaluation():
         data = json.load(f)
 
     best_name = data["best_model"]
-    best = next(m for m in data["models"] if m["model"] == best_name)
-    cm = best["confusion_matrix_at_0.5"]
+    test = data["test"]
+    cm = test["confusion_matrix_at_threshold"]
 
     fig, ax = plt.subplots(figsize=(4.5, 4))
     matrix = np.array([[cm["tn"], cm["fp"]], [cm["fn"], cm["tp"]]])
@@ -156,7 +158,8 @@ def plot_model_evaluation():
                      color="white" if matrix[i, j] > matrix.max() / 2 else "black")
     ax.set_xticks([0, 1]); ax.set_xticklabels(["Pred Legit", "Pred Fraud"])
     ax.set_yticks([0, 1]); ax.set_yticklabels(["Actual Legit", "Actual Fraud"])
-    ax.set_title(f"Confusion Matrix - {best_name} (threshold=0.5)")
+    ax.set_title(f"fraudTest.csv - {best_name}\n(threshold {test['decision_threshold']:.3f}, chosen on validation)",
+                 fontsize=10)
     _save(fig, "08_confusion_matrix.png")
 
     # Bar chart comparing models on precision/recall/f1/roc_auc/pr_auc
@@ -172,7 +175,7 @@ def plot_model_evaluation():
     ax.set_xticks(x + width * 2)
     ax.set_xticklabels(names)
     ax.set_ylabel("Score")
-    ax.set_title("Model Comparison")
+    ax.set_title("Model Comparison (validation: latest 20% of fraudTrain.csv)")
     ax.legend(loc="upper right", fontsize=8)
     _save(fig, "09_model_comparison.png")
 

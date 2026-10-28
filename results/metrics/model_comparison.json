@@ -1,59 +1,131 @@
 {
+  "schema_version": "kaggle-sparkov-v1",
+  "validation_strategy": "chronological holdout: latest 20% of fraudTrain.csv by timestamp; model chosen by validation PR-AUC, threshold = validation F1 optimum",
+  "split": {
+    "train_file": "C:\\Users\\Ramanan\\Downloads\\archive (5)\\fraudTrain.csv",
+    "test_file": "C:\\Users\\Ramanan\\Downloads\\archive (5)\\fraudTest.csv",
+    "fit_rows": 1037340,
+    "fit_fraud": 5968,
+    "fit_period": [
+      "2019-01-01 00:00:18",
+      "2020-03-06 07:15:17"
+    ],
+    "validation_rows": 259335,
+    "validation_fraud": 1538,
+    "validation_period": [
+      "2020-03-06 07:16:43",
+      "2020-06-21 12:13:37"
+    ]
+  },
   "models": [
     {
       "model": "logistic_regression",
-      "precision_at_0.5": 0.0359982332155477,
-      "recall_at_0.5": 0.6680327868852459,
-      "f1_at_0.5": 0.0683151718357083,
-      "roc_auc": 0.8450731248030429,
-      "pr_auc": 0.12648069595645553,
+      "rows": 259335,
+      "fraud_rows": 1538,
+      "roc_auc": 0.945167933441123,
+      "pr_auc": 0.19843189469863223,
+      "precision_at_0.5": 0.03967360720315138,
+      "recall_at_0.5": 0.8250975292587777,
+      "f1_at_0.5": 0.07570695621047607,
       "confusion_matrix_at_0.5": {
-        "tn": 25391,
-        "fp": 4365,
-        "fn": 81,
-        "tp": 163
+        "tn": 227080,
+        "fp": 30717,
+        "fn": 269,
+        "tp": 1269
       },
-      "best_f1_threshold": 0.9784915281066892,
-      "precision_at_best_threshold": 0.20955882352941177,
-      "recall_at_best_threshold": 0.2336065573770492,
-      "f1_at_best_threshold": 0.22093023255813954
+      "decision_threshold": 0.9235466538453597,
+      "precision_at_threshold": 0.30391810801270736,
+      "recall_at_threshold": 0.5598179453836151,
+      "f1_at_threshold": 0.3939601921757035,
+      "confusion_matrix_at_threshold": {
+        "tn": 255825,
+        "fp": 1972,
+        "fn": 677,
+        "tp": 861
+      },
+      "train_seconds": 4.9
     },
     {
       "model": "random_forest",
-      "precision_at_0.5": 0.058946634112312525,
-      "recall_at_0.5": 0.6926229508196722,
-      "f1_at_0.5": 0.10864673738347798,
-      "roc_auc": 0.8859919972056883,
-      "pr_auc": 0.08487164997509483,
+      "rows": 259335,
+      "fraud_rows": 1538,
+      "roc_auc": 0.9938975532774341,
+      "pr_auc": 0.8347998150663248,
+      "precision_at_0.5": 0.39893168400337364,
+      "recall_at_0.5": 0.922626788036411,
+      "f1_at_0.5": 0.5570166830225711,
       "confusion_matrix_at_0.5": {
-        "tn": 27058,
-        "fp": 2698,
-        "fn": 75,
-        "tp": 169
+        "tn": 255659,
+        "fp": 2138,
+        "fn": 119,
+        "tp": 1419
       },
-      "best_f1_threshold": 0.7362206753708249,
-      "precision_at_best_threshold": 0.1294820717131474,
-      "recall_at_best_threshold": 0.26639344262295084,
-      "f1_at_best_threshold": 0.1742627345844504
+      "decision_threshold": 0.7661367253166843,
+      "precision_at_threshold": 0.7910034602076125,
+      "recall_at_threshold": 0.7431729518855656,
+      "f1_at_threshold": 0.7663426081126383,
+      "confusion_matrix_at_threshold": {
+        "tn": 257495,
+        "fp": 302,
+        "fn": 395,
+        "tp": 1143
+      },
+      "train_seconds": 22.1
     },
     {
       "model": "xgboost",
-      "precision_at_0.5": 0.07618393960192175,
-      "recall_at_0.5": 0.45491803278688525,
-      "f1_at_0.5": 0.13051146384479717,
-      "roc_auc": 0.8518052014306523,
-      "pr_auc": 0.0796994422841576,
+      "rows": 259335,
+      "fraud_rows": 1538,
+      "roc_auc": 0.9979992183242858,
+      "pr_auc": 0.8985910986106307,
+      "precision_at_0.5": 0.470568891811904,
+      "recall_at_0.5": 0.9304291287386216,
+      "f1_at_0.5": 0.6250272985367984,
       "confusion_matrix_at_0.5": {
-        "tn": 28410,
-        "fp": 1346,
-        "fn": 133,
-        "tp": 111
+        "tn": 256187,
+        "fp": 1610,
+        "fn": 107,
+        "tp": 1431
       },
-      "best_f1_threshold": 0.7936515212059021,
-      "precision_at_best_threshold": 0.1488833746898263,
-      "recall_at_best_threshold": 0.2459016393442623,
-      "f1_at_best_threshold": 0.18547140649149924
+      "decision_threshold": 0.9492823481559753,
+      "precision_at_threshold": 0.8777540867093105,
+      "recall_at_threshold": 0.8029908972691807,
+      "f1_at_threshold": 0.8387096774193549,
+      "confusion_matrix_at_threshold": {
+        "tn": 257625,
+        "fp": 172,
+        "fn": 303,
+        "tp": 1235
+      },
+      "train_seconds": 33.2
     }
   ],
-  "best_model": "logistic_regression"
+  "best_model": "xgboost",
+  "decision_threshold": 0.9492823481559753,
+  "test": {
+    "model": "xgboost",
+    "rows": 555719,
+    "fraud_rows": 2145,
+    "roc_auc": 0.997049951052126,
+    "pr_auc": 0.8554154599045855,
+    "precision_at_0.5": 0.36891561736515693,
+    "recall_at_0.5": 0.9151515151515152,
+    "f1_at_0.5": 0.5258505223680686,
+    "confusion_matrix_at_0.5": {
+      "tn": 550216,
+      "fp": 3358,
+      "fn": 182,
+      "tp": 1963
+    },
+    "decision_threshold": 0.9492823481559753,
+    "precision_at_threshold": 0.8126829268292682,
+    "recall_at_threshold": 0.7766899766899766,
+    "f1_at_threshold": 0.7942789034564959,
+    "confusion_matrix_at_threshold": {
+      "tn": 553190,
+      "fp": 384,
+      "fn": 479,
+      "tp": 1666
+    }
+  }
 }

@@ -37,9 +37,11 @@ Verify which backend was used from the script's first printed line:
 
 ## What's stored, and why NoSQL fits this data
 
-- **`fraud_alerts`** - one flexible document per high-risk transaction
-  (from `results/fraud_detection/scored_transactions.csv`), with a nested
-  customer sub-document and model score. Alert-style records like this
+- **`fraud_alerts`** - one flexible document for each of the 500
+  highest-scored `fraudTest.csv` transactions (out-of-sample scores in
+  `results/fraud_detection/scored_test_transactions.parquet`). Each has a
+  nested customer sub-document, the model score and decision
+  (`predicted_fraud`), and the actual `is_fraud` label (`actual_label`). Alert-style records like this
   commonly vary in shape (a rule-based alert vs. a model-based alert may
   carry different fields), which fits a document store more naturally
   than a fixed relational schema.

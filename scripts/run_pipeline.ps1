@@ -2,11 +2,12 @@
 # End-to-end pipeline runner (Windows PowerShell, local/demo mode).
 #
 # Runs every stage of the project in the correct order:
-#   1. Synthetic data generation (skipped if data/raw/transactions.csv exists)
-#   2. Data cleaning & preprocessing (pandas)
+#   1. Check the Kaggle fraudTrain.csv / fraudTest.csv files are readable
+#      (BDA_TRAIN_CSV / BDA_TEST_CSV, default ~/Downloads/archive (5)/)
+#   2. Data cleaning & preprocessing (pandas -> one Parquet file)
 #   3. MapReduce aggregations (local, no Hadoop needed)
 #   4. Spark DataFrame processing + Spark SQL (Hive-style) analytics
-#   5. Fraud detection model training & evaluation
+#   5. Fraud detection: train + validate on fraudTrain, final test on fraudTest
 #   6. NoSQL (MongoDB / mongomock) load & example queries
 #   7. Visualization (chart generation)
 #
@@ -17,6 +18,11 @@
 # machine's default JDK may be newer than Spark supports, so this script
 # temporarily points JAVA_HOME at a compatible JDK for the Spark steps only.
 # Adjust $SparkJavaHome below if your compatible JDK lives elsewhere.
+#
+# Spark's Windows launch scripts (*.cmd) break on paths containing
+# parentheses, such as "Credit Card(BDA)". When the project path has one, the
+# Spark steps run through a directory junction to the venv at
+# %TEMP%da_venv (created automatically; it is only a link, no copy).
 # ============================================================================
 
 # NOTE: deliberately NOT setting $ErrorActionPreference = "Stop" here.
@@ -46,12 +52,8 @@ function Run-Step($Description, $Command) {
     }
 }
 
-# 1. Data generation (only if no raw dataset present)
-if (-not (Test-Path "data\raw\transactions.csv")) {
-    Run-Step "1/7 Generating synthetic dataset" { & $Python scripts\generate_synthetic_data.py }
-} else {
-    Write-Host "`n=== 1/7 Raw dataset already present - skipping generation ===" -ForegroundColor Cyan
-}
+# 1. Dataset check (no fallback dataset - the real Kaggle files are required)
+Run-Step "1/7 Checking Kaggle dataset files" { & $Python -c "from config import config as c; from src.preprocessing.clean_data import check_raw_file; [check_raw_file(p) or print('found', p) for p in c.RAW_SPLITS.values()]" }
 
 # 2. Preprocessing
 Run-Step "2/7 Cleaning & preprocessing data" { & $Python src\preprocessing\clean_data.py }
@@ -67,11 +69,22 @@ if (Test-Path $SparkJavaHome) {
 } else {
     Write-Warning "Spark-compatible JDK not found at $SparkJavaHome - Spark steps may fail. See docs/SPARK_SETUP.md."
 }
-Run-Step "4/7 Spark DataFrame processing" { & $Python src\spark\data_processing.py }
-Run-Step "4/7 Spark SQL (Hive-style) analytics" { & $Python src\spark\hive_style_analytics.py }
+$SparkPython = $Python
+if ($ProjectRoot -match "[()]") {
+    $VenvLink = Join-Path $env:TEMP "bda_venv"
+    if (-not (Test-Path $VenvLink)) {
+        New-Item -ItemType Junction -Path $VenvLink -Target (Resolve-Path ".\venv").Path | Out-Null
+    }
+    $SparkPython = "$VenvLink\Scripts\python.exe"
+    $env:SPARK_HOME = "$VenvLink\Lib\site-packages\pyspark"
+    $env:PYSPARK_PYTHON = $SparkPython
+}
+Run-Step "4/7 Spark DataFrame processing" { & $SparkPython src\spark\data_processing.py }
+Run-Step "4/7 Spark SQL (Hive-style) analytics" { & $SparkPython src\spark\hive_style_analytics.py }
 
 # 5. Fraud detection model
 Run-Step "5/7 Training & evaluating fraud detection models" { & $Python src\fraud_detection\train_model.py }
+Run-Step "5/7 Verifying the saved model" { & $Python src\fraud_detection\verify_model.py }
 
 # 6. NoSQL
 Run-Step "6/7 Loading analytics into MongoDB/mongomock" { & $Python src\nosql\store_analytics.py }

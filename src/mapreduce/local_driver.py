@@ -7,14 +7,17 @@ This runs the EXACT SAME mapper.py and reducer.py scripts that would be
 submitted to a real cluster via:
 
     hadoop jar $HADOOP_HOME/share/hadoop/tools/lib/hadoop-streaming-*.jar \
-        -input /user/bda/transactions.csv \
+        -input /user/bda/data/raw/fraudTrain.csv -input /user/bda/data/raw/fraudTest.csv \
         -output /user/bda/output/category_aggregation \
         -mapper "python mapper.py" -reducer "python reducer.py" \
         -file src/mapreduce/category_aggregation/mapper.py \
         -file src/mapreduce/category_aggregation/reducer.py
 
 Locally, it just replaces HDFS + YARN's job scheduling and the shuffle/sort
-step with: subprocess pipe -> Python sort() -> subprocess pipe. The
+step with: subprocess pipe -> Python sort() -> subprocess pipe. As on
+Hadoop, where each input file/split gets its own map task, the mapper is run
+once per input file (fraudTrain.csv and fraudTest.csv, read in place from the
+paths in config/config.py) and all map output is shuffled into one reduce. The
 map/reduce logic itself is untouched, which is the point being
 demonstrated - the same code runs standalone or on a cluster.
 
@@ -34,31 +37,35 @@ from config import config as cfg
 MAPREDUCE_DIR = Path(__file__).resolve().parent
 
 
-def run_job(job_name: str, input_csv: Path = cfg.CLEANED_TRANSACTIONS_CSV) -> Path:
+def run_job(job_name: str, input_files: list = None) -> Path:
+    input_files = [Path(p) for p in (input_files or cfg.RAW_SPLITS.values())]
     job_dir = MAPREDUCE_DIR / job_name
     mapper_path = job_dir / "mapper.py"
     reducer_path = job_dir / "reducer.py"
     if not mapper_path.exists() or not reducer_path.exists():
         raise FileNotFoundError(f"MapReduce job '{job_name}' not found under {job_dir}")
-    if not input_csv.exists():
-        raise FileNotFoundError(
-            f"Input file {input_csv} not found. Run "
-            f"'python src/preprocessing/clean_data.py' first."
-        )
+    for path in input_files:
+        if not path.is_file():
+            raise FileNotFoundError(
+                f"Input file {path} not found. Set BDA_TRAIN_CSV / BDA_TEST_CSV "
+                f"to the Kaggle fraudTrain.csv / fraudTest.csv (see docs/DATASET.md)."
+            )
 
     python_exe = sys.executable
 
-    # --- Map phase ----------------------------------------------------
-    with open(input_csv, "rb") as f_in:
-        map_proc = subprocess.run(
-            [python_exe, str(mapper_path)],
-            stdin=f_in, capture_output=True, text=False,
-        )
-    if map_proc.returncode != 0:
-        raise RuntimeError(f"Mapper failed:\n{map_proc.stderr.decode(errors='replace')}")
-
-    mapped_lines = map_proc.stdout.decode("utf-8").splitlines()
-    print(f"[{job_name}] Map phase emitted {len(mapped_lines):,} key-value pairs")
+    # --- Map phase (one map task per input file) ------------------------
+    mapped_lines = []
+    for path in input_files:
+        with open(path, "rb") as f_in:
+            map_proc = subprocess.run(
+                [python_exe, str(mapper_path)],
+                stdin=f_in, capture_output=True, text=False,
+            )
+        if map_proc.returncode != 0:
+            raise RuntimeError(f"Mapper failed on {path}:\n{map_proc.stderr.decode(errors='replace')}")
+        lines = map_proc.stdout.decode("utf-8").splitlines()
+        print(f"[{job_name}] Map task on {path.name} emitted {len(lines):,} key-value pairs")
+        mapped_lines.extend(lines)
 
     # --- Shuffle & sort (this is what Hadoop's framework does natively) ---
     mapped_lines.sort(key=lambda line: line.split("\t", 1)[0])

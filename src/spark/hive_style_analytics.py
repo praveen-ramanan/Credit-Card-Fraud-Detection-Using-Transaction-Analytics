@@ -107,6 +107,17 @@ QUERIES = {
         ORDER BY fraud_amount DESC
         LIMIT 20
     """,
+    "11_split_summary": """
+        SELECT split,
+               COUNT(*) AS txn_count,
+               SUM(is_fraud) AS fraud_count,
+               ROUND(100.0 * SUM(is_fraud) / COUNT(*), 3) AS fraud_rate_pct,
+               MIN(trans_date_trans_time) AS first_txn,
+               MAX(trans_date_trans_time) AS last_txn
+        FROM transactions
+        GROUP BY split
+        ORDER BY split DESC
+    """,
 }
 
 

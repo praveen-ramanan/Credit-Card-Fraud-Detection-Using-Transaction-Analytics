@@ -42,8 +42,8 @@ You can also run the classic Unix pipeline manually to see the same
 mapper/reducer contract Hadoop Streaming uses:
 
 ```bash
-# from a bash shell (e.g. Git Bash), after running the preprocessing step
-cat data/processed/transactions_clean.csv \
+# from a bash shell (e.g. Git Bash); the mapper reads the raw Kaggle CSV
+cat "$HOME/Downloads/archive (5)/fraudTrain.csv" \
   | python src/mapreduce/category_aggregation/mapper.py \
   | sort \
   | python src/mapreduce/category_aggregation/reducer.py
@@ -51,7 +51,9 @@ cat data/processed/transactions_clean.csv \
 
 (the mapper uses `csv.DictReader` on stdin, which consumes the first line
 as the header itself - pass the full CSV including its header, do not
-strip it.)
+strip it. Quoted merchant names containing commas are parsed correctly.
+`local_driver.py` runs one map task per input file - `fraudTrain.csv` and
+`fraudTest.csv` - and reduces their combined output, 1,852,394 records.)
 
 ## Running on a real Hadoop cluster (Hadoop Streaming)
 
@@ -60,7 +62,8 @@ Requires HDFS to be running with the input file uploaded (see
 
 ```bash
 hadoop jar $HADOOP_HOME/share/hadoop/tools/lib/hadoop-streaming-*.jar \
-    -input  /user/bda/data/processed/transactions_clean.csv \
+    -input  /user/bda/data/raw/fraudTrain.csv \
+    -input  /user/bda/data/raw/fraudTest.csv \
     -output /user/bda/output/category_aggregation \
     -mapper "python3 mapper.py" \
     -reducer "python3 reducer.py" \

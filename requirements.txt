@@ -20,6 +20,9 @@ matplotlib>=3.7.0
 seaborn>=0.12.0
 plotly>=5.18.0
 
+# Dashboard
+streamlit>=1.46.0         # app.py (uses the width="stretch" API)
+
 # Utilities
 pyyaml>=6.0
 joblib>=1.3.0

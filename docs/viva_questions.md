@@ -154,8 +154,8 @@ code path runs either way. Development/testing here used the
 **Q: Why is fraud detection a classification problem, and specifically an imbalanced one?**
 Each transaction has a binary outcome to predict - fraud or legitimate -
 which is classification by definition. It's an *imbalanced* classification
-problem because the positive (fraud) class is rare: 0.81% of transactions
-in this project's data, and well under 1% in real-world card data too.
+problem because the positive (fraud) class is rare: 0.58% of
+`fraudTrain.csv` and 0.39% of `fraudTest.csv` transactions in this project's data, and well under 1% in real-world card data too.
 That imbalance is the central challenge - most of the standard ML
 machinery (accuracy, default 0.5 thresholds, unweighted loss functions)
 implicitly assumes roughly balanced classes and misleads badly if used
@@ -195,8 +195,10 @@ ROC-AUC evaluates the true-positive rate against the false-positive rate,
 and the false-positive rate is computed against the (very large) true
 negative population - so ROC-AUC can look good even when precision on
 the rare positive class is poor. This project observed this directly:
-Random Forest had the *highest* ROC-AUC (0.886) but the *lowest* PR-AUC
-(0.085) of the three models tested. PR-AUC (precision-recall AUC) is
+on the validation set Logistic Regression has a respectable-looking
+ROC-AUC of 0.945 but a PR-AUC of only 0.198 (at its best threshold only
+30% of its flags are fraud), while XGBoost reaches ROC-AUC 0.998 and
+PR-AUC 0.899. PR-AUC (precision-recall AUC) is
 reported alongside it because it's computed only from precision and
 recall on the positive class, making it far more informative under this
 level of imbalance.
@@ -209,13 +211,17 @@ during training, rather than duplicating minority-class rows
 (oversampling) or discarding majority-class rows (undersampling).
 
 **Q: Which features were used, and why were card number/name excluded?**
-Amount, transaction hour/month, customer age, customer-merchant distance,
+Amount, transaction hour, customer age, customer-merchant distance,
 city population, weekend/night/high-value flags, and one-hot encoded
-category/state/gender (`src/fraud_detection/features.py`). Card number,
-customer name, raw timestamp, and date of birth were excluded because
-they either identify a specific individual rather than generalizing (a
-card number carries no pattern a model can learn from for transactions it
-hasn't seen from that exact card) or directly/indirectly leak the label.
+category/state/gender - 75 columns (`src/fraud_detection/features.py`).
+Card number, transaction ID, names, street and zip were excluded because
+they identify a specific individual rather than generalizing: the dataset
+has only ~1,000 cards, so the model would memorise cards instead of
+learning fraud patterns. Merchant, city and job were excluded for the
+same memorisation reason, and month because the training and test files
+cover different months/years. The label itself is guarded by an
+assertion in `build_features()`. Raw timestamps and DOB are used only
+through derived features (hour, weekend, age).
 
 **Q: Why train three different models instead of just one?**
 To compare how different model families handle the same imbalanced
@@ -224,20 +230,30 @@ problem - Logistic Regression (a simple linear baseline), Random Forest
 (gradient boosting, generally strong on tabular data). Comparing them,
 rather than assuming one is best, is itself part of demonstrating the
 evaluation methodology, and the results (Section 15 of the README) show
-the "best" model is genuinely metric-dependent (Random Forest has the
-best ROC-AUC; Logistic Regression has the best PR-AUC).
+that the linear baseline is far behind the tree ensembles on PR-AUC
+(0.198 vs 0.835 / 0.899), even though its ROC-AUC (0.945) looks fine.
+
+**Q: How did you avoid data leakage between training and testing?**
+The two Kaggle files are kept separate. `fraudTrain.csv` is split
+chronologically: models are fit on the earliest 80% and validated on the
+latest 20%. Model choice (PR-AUC) and the decision threshold (F1-optimal)
+are made on that validation set. `fraudTest.csv` is never merged,
+re-split, fitted on or tuned on - it is scored once at the end, giving
+ROC-AUC 0.997, PR-AUC 0.855, precision 0.813, recall 0.777. The one-hot
+vocabulary and scaler are learned from training rows only. Cleaning is
+row-by-row, so it learns nothing.
 
 ## Architecture / End-to-End
 
 **Q: Describe how the complete pipeline works, end to end.**
-Transaction data (real Kaggle schema, or this project's schema-matched
-synthetic generator) is ingested and placed under storage paths that
+Transaction data (the Kaggle `fraudTrain.csv` / `fraudTest.csv` files,
+1.85M transactions) is ingested and placed under storage paths that
 stand in for HDFS locally (with real HDFS commands documented separately).
 `clean_data.py` deduplicates, handles missing values, and derives
 analytics-friendly features using pandas. From there, three parallel
 analytical views are produced: (1) real Hadoop-Streaming-compatible
 MapReduce jobs aggregate by category and customer; (2) Hive `.hql`
-queries (mirrored locally via Spark SQL) answer ten transaction-analytics
+queries (mirrored locally via Spark SQL) answer eleven transaction-analytics
 questions; (3) Spark DataFrames demonstrate distributed-style
 filter/groupBy/SQL processing directly. The cleaned data also feeds a
 supervised fraud classifier (Logistic Regression / Random Forest /

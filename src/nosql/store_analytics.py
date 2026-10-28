@@ -18,10 +18,11 @@ better than a single relational instance - relevant even though this
 project itself runs at a small demo scale.
 
 This script stores two kinds of documents:
-    1. fraud_alerts       - one flexible document per transaction flagged
-                             by the fraud-detection model (see
-                             src/fraud_detection/train_model.py), with a
-                             nested customer/merchant sub-document.
+    1. fraud_alerts       - one flexible document per highest-scored
+                             fraudTest.csv transaction (out-of-sample scores
+                             from src/fraud_detection/train_model.py), with a
+                             nested customer/merchant sub-document and both
+                             the model's prediction and the actual label.
     2. category_analytics - aggregated category-level analytics (reusing
                              the output already computed by the Spark/Hive
                              stage), for fast dashboard-style lookups.
@@ -56,18 +57,18 @@ def _row_to_alert_doc(row: pd.Series) -> dict:
         },
         "actual_label": int(row.get(cfg.LABEL_COL, 0)),
         "predicted_fraud_probability": float(row.get("fraud_probability", 0.0)),
-        "flagged_reason": row.get("flagged_reason", "high_model_score"),
+        "predicted_fraud": int(row.get("predicted_fraud", 0)),
+        "flagged_reason": "above_decision_threshold" if row.get("predicted_fraud", 0) else "high_model_score",
     }
 
 
-def load_fraud_alerts(db, scored_csv: Path, top_n: int = 500):
-    """Load the highest fraud-probability transactions as alert documents."""
-    if not scored_csv.exists():
-        print(f"[nosql] {scored_csv} not found - run fraud detection scoring first. Skipping alerts load.")
+def load_fraud_alerts(db, scored_file: Path = cfg.SCORED_TEST_FILE, top_n: int = 500):
+    """Load the highest fraud-probability test transactions as alert documents."""
+    if not scored_file.exists():
+        print(f"[nosql] {scored_file} not found - run fraud detection scoring first. Skipping alerts load.")
         return 0
 
-    df = pd.read_csv(scored_csv)
-    df = df.sort_values("fraud_probability", ascending=False).head(top_n)
+    df = pd.read_parquet(scored_file).nlargest(top_n, "fraud_probability")
 
     docs = [_row_to_alert_doc(row) for _, row in df.iterrows()]
     collection = db["fraud_alerts"]
@@ -124,10 +125,9 @@ def run():
     db, backend = get_mongo_db()
     print(f"[nosql] Using backend: {backend}")
 
-    scored_csv = cfg.RESULTS_DIR / "fraud_detection" / "scored_transactions.csv"
     category_csv = cfg.RESULTS_DIR / "spark_output" / "category_summary.csv"
 
-    n_alerts = load_fraud_alerts(db, scored_csv)
+    n_alerts = load_fraud_alerts(db)
     print(f"[nosql] Loaded {n_alerts:,} documents into 'fraud_alerts'")
 
     n_cat = load_category_analytics(db, category_csv)
