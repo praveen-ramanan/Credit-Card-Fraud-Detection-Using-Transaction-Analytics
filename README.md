@@ -1,528 +1,515 @@
-# Banking - Credit Card Fraud Detection Using Transaction Analytics
+# Credit Card Fraud Detection Using Transaction Analytics
 
-**Semester V Big Data Architecture Mini-Project**
-B.Tech AI & Data Science
+**Semester V Big Data Architecture Mini-Project** · B.Tech AI & Data Science
+
+An end-to-end credit card fraud detection and transaction analytics pipeline built on the Kaggle *Credit Card Transactions Fraud Detection* dataset (1.85 million simulated transactions). It cleans the data and aggregates it with MapReduce. It runs Hive-style SQL analytics through Spark SQL and processes the data with Spark DataFrames. It trains and compares fraud classifiers and stores fraud alerts in MongoDB. The results are presented in static charts and an interactive Streamlit dashboard.
+
+Every stage runs locally on a Windows laptop. Hadoop/HDFS, Hive and a MongoDB server are **not** required for the local run. The project includes the real HiveQL scripts, Hadoop Streaming commands and HDFS ingestion commands for running against a cluster, but these have not been executed against real cluster infrastructure. See [Big Data components](#13-big-data-components).
 
 ---
 
-## 1. Abstract
+## Contents
 
-This project implements an end-to-end Big Data pipeline for analyzing
-credit-card transaction data and detecting potentially fraudulent
-transactions. Raw transaction data flows through data ingestion,
-distributed-storage-style organization (HDFS locally simulated),
-distributed batch aggregation (MapReduce), SQL-on-Hadoop analytics
-(Hive), large-scale DataFrame processing (Apache Spark / Spark SQL),
-semi-structured alert storage (MongoDB), and a supervised machine
-learning classifier for fraud detection, finishing in a set of analytics
-visualizations. Every stage runs locally in a documented demo mode on a
-standard Windows laptop, with parallel instructions for running the same
-code against a real Hadoop/Spark/Hive/MongoDB deployment.
+1. [Overview](#1-overview)
+2. [Key features](#2-key-features)
+3. [Architecture and workflow](#3-architecture-and-workflow)
+4. [Technology stack](#4-technology-stack)
+5. [Machine-learning methodology](#5-machine-learning-methodology)
+6. [Dataset and setup](#6-dataset-and-setup)
+7. [Installation](#7-installation)
+8. [Running the pipeline](#8-running-the-pipeline)
+9. [Launching the dashboard](#9-launching-the-dashboard)
+10. [Evaluation metrics and results](#10-evaluation-metrics-and-results)
+11. [Analytics results](#11-analytics-results)
+12. [Project structure](#12-project-structure)
+13. [Big Data components](#13-big-data-components)
+14. [Testing](#14-testing)
+15. [Limitations](#15-limitations)
+16. [Future improvements](#16-future-improvements)
+17. [References and dataset attribution](#17-references-and-dataset-attribution)
 
-## 2. Problem Statement
+---
 
-Credit-card fraud is rare (well under 1% of transactions in this and most
-real datasets) but individually costly, and transaction volumes at bank
-scale are too large for manual review or single-machine relational
-processing. The project addresses two linked problems: (1) how to
-store, organize, and analyze large-scale transaction data using a Big
-Data architecture, and (2) how to build a fraud classifier that performs
-well under extreme class imbalance, where naive accuracy is meaningless.
+## 1. Overview
 
-## 3. Motivation
+Credit card fraud is rare (about 0.5% of the transactions in this dataset) but each case is costly. Transaction volumes are also too large for manual review. The project addresses two linked problems:
 
-Card issuers process millions of transactions; even a small percentage
-misclassified means either large financial losses (missed fraud) or
-large customer friction (false declines). This project was chosen to
-concretely connect the syllabus's Big Data stack (HDFS, MapReduce, Hive,
-Spark, NoSQL) to a domain where the "big data" framing is not
-decorative: transaction volume, semi-structured alert data, and batch
-analytical queries are all genuine characteristics of real banking fraud
-systems.
+1. **Big Data analytics**: storing, aggregating and querying a large transaction dataset with the Hadoop-ecosystem programming models (HDFS layout, MapReduce, Hive, Spark, NoSQL).
+2. **Imbalanced classification**: building a fraud classifier that is evaluated with precision, recall, F1, ROC-AUC and PR-AUC. Raw accuracy is meaningless when more than 99% of transactions are legitimate.
 
-## 4. Objectives
+The dataset is **simulated** (Sparkov generator), not real bank data. Results describe this dataset only and do not establish how the model would perform on production banking transactions.
 
-1. Build a reproducible pipeline: ingestion → storage → cleaning →
-   distributed analytics → ML → visualization.
-2. Demonstrate each prescribed syllabus component with a real, runnable
-   implementation, not just a description.
-3. Build a fraud classifier evaluated with metrics appropriate to
-   extreme class imbalance (precision, recall, F1, ROC-AUC, PR-AUC),
-   not raw accuracy.
-4. Produce actionable transaction/fraud analytics (by category, state,
-   customer, merchant, time, and value).
-5. Keep the entire project runnable locally, at zero cost, on Windows.
+## 2. Key features
 
-## 5. Dataset Description
+- **Real-dataset ingestion**: reads the Kaggle `fraudTrain.csv` and `fraudTest.csv` in place, at configurable paths. Missing files raise an error; there is no substitute dataset.
+- **Preprocessing**: drops the unnamed index column, deduplicates, handles missing values, parses dates, and derives time, age, distance and high-value features. Output is a single Parquet file.
+- **MapReduce**: two Hadoop-Streaming-compatible mapper/reducer jobs (per category, per anonymized card), run locally by a driver that simulates the shuffle/sort step.
+- **Hive / Spark SQL**: eleven HiveQL analytics queries. The same queries are executed locally through Spark SQL.
+- **Spark DataFrames**: filtering, `groupBy().agg()` and Spark SQL over temp views.
+- **Fraud detection**: Logistic Regression, Random Forest and XGBoost are compared. Validation uses a chronological holdout, and the threshold is chosen on validation data. Final metrics come from the separate test file.
+- **Inference**: validated scoring of single transactions or CSV batches, using the exact training-time feature code.
+- **NoSQL**: fraud alerts stored as nested MongoDB documents, plus a MongoDB aggregation pipeline. Without a server, it falls back automatically to the in-memory `mongomock`.
+- **Visualization**: 9 matplotlib charts written to `results/figures/`.
+- **Streamlit dashboard**: six pages covering dataset overview, transaction analytics, a single-transaction fraud check, model performance, MongoDB fraud alerts, and batch CSV scoring.
 
-See `docs/DATASET.md` for the full column schema and sourcing details.
-Summary:
+## 3. Architecture and workflow
 
-- **Recommended real dataset**: Kaggle "Credit Card Transactions Fraud
-  Detection Dataset" (Sparkov-generated, `kartik2112`) - chosen over the
-  more famous anonymized-PCA ULB dataset specifically because it has
-  named merchant/category/location/customer columns, which is what makes
-  merchant-, category-, and location-level Big Data analytics possible.
-- **What this repo actually ships with and was tested against**: a
-  **synthetic dataset with the identical schema**, generated by
-  `scripts/generate_synthetic_data.py`, because the real dataset requires
-  a Kaggle login to download. Fraud is injected via documented rules (odd
-  hour, high-risk category, large customer-merchant distance) so the
-  classifier has genuine, learnable signal. **All results in this README
-  are computed from this synthetic data** - swap in the real Kaggle CSV
-  (see `docs/DATASET.md`) for a final submission if real-world results
-  are required; no code changes are needed.
-- Generated demo dataset used for the results below: **150,000
-  transactions, 600 customers, 120 merchants, 14 categories, 0.81% fraud
-  rate**.
-
-## 6. System Architecture
-
-```
-Transaction Dataset (Kaggle schema / synthetic generator)
-        |
-        v
-Data Ingestion  (scripts/generate_synthetic_data.py, or real CSV drop-in)
-        |
-        v
-HDFS / Big Data Storage   (data/raw, data/processed locally;
-        |                  real HDFS via docs/HDFS_SETUP.md)
-        v
-Data Cleaning & Preprocessing   (src/preprocessing/clean_data.py, pandas)
-        |
-        +----------------------------+
-        v                            v
-MapReduce Aggregations        Hive / Spark SQL Analytics
-(src/mapreduce/*)             (src/hive/hql/*.hql on a real cluster;
-        |                      src/spark/hive_style_analytics.py locally)
-        v                            |
-Spark DataFrame Processing <---------+
-(src/spark/data_processing.py)
-        |
-        v
-Fraud Detection Model   (src/fraud_detection/*, scikit-learn / XGBoost)
-        |
-        v
-NoSQL Storage (fraud alerts)   (src/nosql/*, MongoDB / mongomock)
-        |
-        v
-Fraud Analytics & Visualization   (src/visualization/plots.py)
-        |
-        v
-Final Reports / Results   (results/)
+```mermaid
+flowchart TD
+    A["Kaggle CSVs<br/>fraudTrain.csv + fraudTest.csv<br/>(read in place)"] --> B["Cleaning & preprocessing<br/>src/preprocessing/clean_data.py"]
+    A --> C["MapReduce jobs<br/>src/mapreduce/ (local driver)"]
+    B --> P[("data/processed/<br/>transactions_clean.parquet")]
+    P --> D["Spark DataFrames<br/>src/spark/data_processing.py"]
+    P --> E["Hive queries via Spark SQL<br/>src/spark/hive_style_analytics.py"]
+    P --> F["Model training & evaluation<br/>src/fraud_detection/train_model.py"]
+    F --> M[("best_model.joblib<br/>model_comparison.json<br/>scored_test_transactions.parquet")]
+    M --> N["MongoDB / mongomock alerts<br/>src/nosql/store_analytics.py"]
+    D --> N
+    P --> V["Charts<br/>src/visualization/plots.py"]
+    M --> V
+    P --> S["Streamlit dashboard<br/>app.py + src/dashboard/"]
+    M --> S
+    C --> S
+    D --> S
+    E --> S
+    N --> S
 ```
 
-## 7. Technology Stack
+`scripts/run_pipeline.ps1` runs the stages in this order:
 
-| Layer | Technology | Mode used in this repo |
+| Step | Stage | Command run by the script |
 |---|---|---|
-| Storage | HDFS | Local filesystem demo + real WSL2/Hadoop instructions |
-| Batch aggregation | MapReduce (Hadoop Streaming pattern) | Runs locally via `local_driver.py`; real Hadoop Streaming documented |
-| SQL-on-Hadoop | Hive | Real `.hql` scripts + local Spark SQL equivalent |
-| Distributed processing | Apache Spark / PySpark 4.x, Spark SQL | Runs locally (`local[*]`), cluster instructions documented |
-| NoSQL | MongoDB (pymongo) | Local/Atlas MongoDB, or zero-install `mongomock` fallback |
-| ML | scikit-learn, XGBoost | Local training, fully run and evaluated |
-| Visualization | matplotlib | Local, fully run |
-| Language | Python 3.11 | venv, `requirements.txt` |
+| 1 | Check that both Kaggle CSVs exist and are readable | inline `check_raw_file()` call |
+| 2 | Cleaning & preprocessing | `src\preprocessing\clean_data.py` |
+| 3 | MapReduce: category and customer aggregation | `src\mapreduce\local_driver.py category_aggregation` / `customer_aggregation` |
+| 4 | Spark DataFrame processing and Spark SQL (Hive-style) analytics | `src\spark\data_processing.py`, `src\spark\hive_style_analytics.py` |
+| 5 | Model training/evaluation, then saved-model verification | `src\fraud_detection\train_model.py`, `src\fraud_detection\verify_model.py` |
+| 6 | Load alerts and category analytics into MongoDB/mongomock | `src\nosql\store_analytics.py` |
+| 7 | Generate charts | `src\visualization\plots.py` |
 
-## 8. Big Data Workflow
+The script stops at the first step that returns a non-zero exit code.
 
-1. **Ingest**: `scripts/generate_synthetic_data.py` (or a real Kaggle CSV
-   placed at `data/raw/transactions.csv`).
-2. **Store**: `data/raw/` / `data/processed/` locally stand in for HDFS
-   paths; `scripts/hdfs_ingest.sh` + `docs/HDFS_SETUP.md` show the real
-   HDFS path.
-3. **Clean**: `src/preprocessing/clean_data.py` - dedupe, handle missing
-   values, parse timestamps, derive features (hour, day-of-week, age,
-   customer-merchant distance, high-value flag).
-4. **Aggregate (MapReduce)**: `src/mapreduce/local_driver.py` runs real
-   Hadoop-Streaming-compatible mapper/reducer scripts.
-5. **Query (Hive / Spark SQL)**: `src/hive/hql/*.hql` (real cluster) and
-   `src/spark/hive_style_analytics.py` (local, same queries).
-6. **Process (Spark DataFrames)**: `src/spark/data_processing.py`.
-7. **Detect fraud (ML)**: `src/fraud_detection/train_model.py`.
-8. **Store alerts (NoSQL)**: `src/nosql/store_analytics.py`.
-9. **Visualize**: `src/visualization/plots.py`.
+## 4. Technology stack
 
-`scripts/run_pipeline.ps1` runs all of the above in order.
+| Layer | Technology | How it is used here |
+|---|---|---|
+| Language | Python 3.11 | Project venv (`venv\`) |
+| Data handling | pandas, NumPy, PyArrow | Fast CSV loading, Parquet I/O |
+| Storage (HDFS) | Local `data/` folders as HDFS stand-ins | Real HDFS commands in `scripts/hdfs_ingest.sh` and `docs/HDFS_SETUP.md` (not executed) |
+| Batch aggregation | MapReduce (Hadoop Streaming pattern) | Runs locally via `local_driver.py`; cluster submission documented |
+| SQL-on-Hadoop | Hive (HiveQL) | `.hql` scripts provided; the same queries executed through Spark SQL |
+| Distributed processing | Apache Spark (PySpark 4.x), Spark SQL | `local[*]` mode; requires JDK 17 or 21 |
+| NoSQL | MongoDB via `pymongo`, `mongomock` fallback | Real server if configured, otherwise in-memory |
+| Machine learning | scikit-learn, XGBoost | Model training, evaluation, inference |
+| Visualization | matplotlib (charts), Plotly (dashboard) | `results/figures/`, Streamlit pages |
+| Dashboard | Streamlit | `app.py` |
+| Testing | pytest, Streamlit `AppTest` | `tests/` |
 
-## 9. HDFS Implementation
+`requirements.txt` also lists `seaborn`, `imbalanced-learn`, `pyyaml` and `tqdm`, but nothing in `src/`, `app.py` or `tests/` imports them.
 
-See `docs/HDFS_SETUP.md`. Local demo mode uses `data/raw/` and
-`data/processed/` as HDFS-path stand-ins (all paths resolved centrally in
-`config/config.py`, no hardcoded paths in the pipeline code). Real HDFS
-setup (WSL2 + Hadoop, pseudo-distributed) and ingestion commands
-(`scripts/hdfs_ingest.sh`, `hdfs dfs -put/-ls/-du/-cat`) are documented
-for the cluster demonstration.
+## 5. Machine-learning methodology
 
-## 10. MapReduce Implementation
+### Features (75 model inputs)
 
-See `docs/MAPREDUCE_SETUP.md`. Two Hadoop-Streaming-compatible jobs:
+Built by `src/fraud_detection/features.py`:
 
-- **`category_aggregation`**: transaction count, total amount, fraud
-  count/amount/rate per merchant category.
-- **`customer_aggregation`**: the same aggregates per (SHA-256-anonymized)
-  customer.
+| Group | Columns |
+|---|---|
+| Numeric | `amt`, `txn_hour`, `customer_age` (age at transaction time), `customer_merchant_distance_km` (haversine), `city_pop` |
+| Boolean | `is_weekend`, `is_night_txn` (00:00-04:59), `is_high_value` (`amt` >= $500) |
+| One-hot | `category` (14), `state` (51 incl. DC), `gender` (2) |
 
-Each `mapper.py`/`reducer.py` pair reads/writes tab-separated
-`stdin`/`stdout` exactly as Hadoop Streaming requires - the identical
-scripts run locally (`src/mapreduce/local_driver.py`, which simulates the
-shuffle/sort step in pure Python) or submitted to a real cluster with
-`hadoop jar hadoop-streaming-*.jar`.
+Columns deliberately excluded from the model:
 
-## 11. Hive Implementation
+- **The label `is_fraud`**: an assertion in `build_features()` rejects the label or identifier columns if they ever reach the feature matrix.
+- **Identifiers**: `trans_num`, `unix_time`, `cc_num`, `first`, `last`, `street`, `zip`. There are only about 1,000 cards, so these would let the model memorise customers.
+- **High-cardinality fields**: `merchant` (693), `city`, `job`.
+- **Raw coordinates**: used only through the distance feature.
+- **`txn_month`**: the train and test files cover different periods, so month mostly encodes the year.
 
-See `docs/HIVE_SETUP.md`. `src/hive/hql/create_tables.hql` defines an
-external Hive table over the cleaned data on HDFS;
-`src/hive/hql/analytics_queries.hql` has 10 analytics queries. Since a
-Hive cluster isn't assumed available locally, the identical queries are
-also executed through Spark SQL (`src/spark/hive_style_analytics.py`),
-which is HiveQL-compatible for this syntax - that is what actually
-produced the results in this repo.
+Identifiers stay in the data for alerts and reports, masked where displayed.
 
-## 12. NoSQL Implementation
+### Models and class imbalance
 
-See `docs/NOSQL_SETUP.md`. `src/nosql/store_analytics.py` loads
-model-flagged transactions as nested `fraud_alerts` documents and
-category-level summaries as `category_analytics` documents into MongoDB
-(or its zero-install `mongomock` fallback), then runs example queries
-including MongoDB's own aggregation pipeline.
+`src/fraud_detection/train_model.py` trains three classifiers:
 
-## 13. Spark Implementation
+| Model | Configuration | Imbalance handling |
+|---|---|---|
+| Logistic Regression | `StandardScaler` + `LogisticRegression(max_iter=1000)` in a pipeline | `class_weight="balanced"` |
+| Random Forest | 100 trees, `max_depth=14`, `min_samples_leaf=5` | `class_weight="balanced_subsample"` |
+| XGBoost | 400 trees, `max_depth=6`, `learning_rate=0.1`, `hist` | `scale_pos_weight` = legitimate/fraud ratio of the training rows |
 
-See `docs/SPARK_SETUP.md` (**includes a real Java-version compatibility
-issue found and fixed while building this project** - Spark 4.2 requires
-JDK 17/21, not this machine's default JDK 26). `src/spark/data_processing.py`
-demonstrates DataFrame creation, schema inspection, filtering,
-`groupBy().agg()`, and Spark SQL over a temp view;
-`src/spark/hive_style_analytics.py` runs the full Hive-equivalent query
-set.
+No oversampling or undersampling is used. `random_state=42` throughout.
 
-## 14. Fraud Detection Methodology
+### Validation and test strategy
 
-`src/fraud_detection/features.py` builds a feature matrix from the
-cleaned data (amount, hour, month, customer age, customer-merchant
-distance, city population, weekend/night/high-value flags, one-hot
-encoded category/state/gender), explicitly excluding identity/label-
-leaking columns (card number, names, raw timestamp, DOB, the label
-itself).
+- **Training and validation**: only `fraudTrain.csv` is used. It is sorted by timestamp and split chronologically.
+  - **Fit set**: the earliest 80%, 1,037,340 rows (2019-01-01 to 2020-03-06).
+  - **Validation set**: the latest 20%, 259,335 rows (2020-03-06 to 2020-06-21).
+  - The one-hot column layout and the logistic-regression scaler are learned from the fit rows only.
+- **Model selection**: the model with the highest **validation PR-AUC** is kept.
+- **Decision threshold**: the F1-optimal point of that model's **validation** precision-recall curve.
+- **Final test**: `fraudTest.csv` (all 555,719 rows) is scored **once** by the selected model at that fixed threshold. It is not merged with training data, re-split, fitted on or used for tuning.
+- **No refit**: the selected model is not retrained on the validation rows, so the stored threshold matches the stored model exactly.
 
-`src/fraud_detection/train_model.py` trains and compares three
-classifiers on a stratified 80/20 train/test split:
+Reported metrics: ROC-AUC, PR-AUC (average precision), and precision, recall, F1 and the confusion matrix, each at both 0.5 and the chosen threshold.
 
-- Logistic Regression (`class_weight="balanced"`)
-- Random Forest (`class_weight="balanced"`)
-- XGBoost (`scale_pos_weight` set from the train-set imbalance ratio)
+### Saved artifacts
 
-**Why this is a classification / imbalanced-learning problem**: fraud
-detection is inherently binary classification on a target where the
-positive class is rare (0.81% here). A model predicting "legitimate"
-for every transaction would score >99% accuracy while catching zero
-fraud - which is exactly why this project treats precision, recall, F1,
-ROC-AUC and PR-AUC as the metrics that matter, never plain accuracy (see
-`docs/viva_questions.md` for the full precision/recall discussion). Class
-imbalance is corrected via `class_weight="balanced"` / `scale_pos_weight`
-rather than naive oversampling, so the model is penalized more for
-minority-class mistakes without duplicating data.
+| Artifact | Contents |
+|---|---|
+| `results/models/best_model.joblib` | Dict with `model`, `feature_names` (training column order), `model_name`, `decision_threshold`, `schema_version` (`kaggle-sparkov-v1`), feature lists, training-file path, timestamp, scikit-learn version |
+| `results/metrics/model_comparison.json` | Split details, per-model **validation** metrics (`models`), `best_model`, `decision_threshold`, and the selected model's **final test** metrics (`test`) |
+| `results/fraud_detection/scored_test_transactions.parquet` | Fraud probability and prediction for every `fraudTest.csv` transaction. Used by the alerts, charts and dashboard; these are out-of-sample scores, not training-data scores |
 
-The model with the best **PR-AUC** (chosen over ROC-AUC because ROC-AUC
-can look misleadingly good under heavy imbalance - see Section 15) is
-saved to `results/models/best_model.joblib` and used to score the full
-dataset for the downstream NoSQL/visualization stages (that full-dataset
-scoring includes training rows, so it is a demo artifact for the
-alerting pipeline, not part of the evaluation below).
+`inference.load_model_bundle()` refuses a bundle with a different `schema_version`, for example a model trained before the Kaggle migration, and asks you to retrain.
 
-## 15. Evaluation Metrics
+### How predictions are made
 
-Metrics are computed **only on the held-out test set** (30,000
-transactions, 244 fraud). At the default 0.5 probability threshold:
+`src/fraud_detection/inference.py` scores new transactions in four steps:
 
-| Model | Precision | Recall | F1 | ROC-AUC | PR-AUC |
+1. **Validate** the 11 raw input fields: `trans_date_trans_time`, `amt`, `category`, `state`, `gender`, `dob`, `city_pop`, `lat`, `long`, `merch_lat`, `merch_long`. The checks are:
+   - parseable dates, with date of birth before the transaction;
+   - `amt > 0`;
+   - valid coordinates;
+   - category, state and gender values that were seen in training.
+
+   Invalid rows are reported with reasons and skipped.
+2. **Derive features** with the same `add_derived_features()` used during cleaning.
+3. **Encode** with `build_features()` and align to the saved `feature_names`.
+4. **Score**: output `fraud_probability`, `predicted_fraud` (probability >= the stored threshold), and a risk level:
+   - **High**: at or above the threshold;
+   - **Elevated**: from 0.5 up to the threshold;
+   - **Low**: below 0.5.
+
+## 6. Dataset and setup
+
+### Source
+
+**Credit Card Transactions Fraud Detection Dataset** by `kartik2112` on Kaggle:
+<https://www.kaggle.com/datasets/kartik2112/fraud-detection>
+
+It was generated with the Sparkov Data Generation tool and simulates transactions of about 1,000 US cardholders at 693 merchants. It is **simulated data, not real bank transactions**. It was chosen over the anonymized-PCA ULB dataset because its named merchant, category, location and customer columns make category-, state-, merchant- and customer-level analytics possible.
+
+| File | Rows | Fraud | Fraud rate | Period | Role in this project |
 |---|---|---|---|---|---|
-| Logistic Regression | 0.036 | 0.668 | 0.068 | 0.845 | **0.126** |
-| Random Forest | 0.059 | 0.693 | 0.109 | 0.886 | 0.085 |
-| XGBoost | 0.076 | 0.455 | 0.131 | 0.852 | 0.080 |
+| `fraudTrain.csv` | 1,296,675 | 7,506 | 0.579% | 2019-01-01 to 2020-06-21 | Training + validation |
+| `fraudTest.csv` | 555,719 | 2,145 | 0.386% | 2020-06-21 to 2020-12-31 | Final test only |
 
-**Logistic Regression was selected as best (highest PR-AUC = 0.126).**
-Confusion matrix at threshold 0.5: TN=25,391, FP=4,365, FN=81, TP=163.
+Both files have 23 columns: an unnamed leading row index (dropped on load), `trans_date_trans_time`, `cc_num`, `merchant`, `category`, `amt`, `first`, `last`, `gender`, `street`, `city`, `state`, `zip`, `lat`, `long`, `city_pop`, `job`, `dob`, `trans_num`, `unix_time`, `merch_lat`, `merch_long`, `is_fraud`. Full column notes are in [`docs/DATASET.md`](docs/DATASET.md).
 
-At a tuned, F1-optimal threshold (0.978) instead of 0.5, Logistic
-Regression reaches precision=0.210, recall=0.234, F1=0.221 - a large
-precision improvement at some recall cost, illustrating why the
-classification **threshold**, not just the model, is a deliberate design
-choice for a fraud system (full numbers for all three models at their
-own tuned thresholds are in `results/metrics/model_comparison.json`).
+**The CSV files are not part of this repository and should not be committed.** `.gitignore` excludes CSV and Parquet data files.
 
-**Why ROC-AUC alone is misleading here**: Random Forest has the *highest*
-ROC-AUC (0.886) but the *lowest* PR-AUC (0.085) of the three models.
-ROC-AUC is computed against the (huge) true-negative class and stays high
-almost regardless of precision on the rare positive class; PR-AUC
-focuses specifically on how well each model ranks the minority (fraud)
-class, which is the actually relevant question here. This is exactly the
-kind of result the syllabus's "why precision/recall matter for imbalanced
-problems" point predicts, observed directly rather than asserted.
+### Where the project looks for the files
 
-These numbers are realistic for a synthetic dataset with intentionally
-noisy fraud signal (fraud correlates only probabilistically with
-category/hour/distance) and a very small number of true fraud cases
-(1,219 total) - they are not tuned or cherry-picked, and are reproducible
-by re-running `scripts/run_pipeline.ps1` (see Section 19).
+`config/config.py` reads the two files **separately and in place**. They are not combined, and not copied into `data/raw/`:
 
-## 16. Results
+| Setting | Environment variable | Default when the variable is unset |
+|---|---|---|
+| `TRAIN_CSV` | `BDA_TRAIN_CSV` | `%USERPROFILE%\Downloads\archive (5)\fraudTrain.csv` |
+| `TEST_CSV` | `BDA_TEST_CSV` | `%USERPROFILE%\Downloads\archive (5)\fraudTest.csv` |
 
-From `results/hive_analytics/` (Spark-SQL-executed, Hive-equivalent
-queries) and `results/mapreduce_output/`, on the 150,000-row demo
-dataset:
+Use either option:
 
-- **Total transactions**: 150,000, totaling **$6,236,540.81** (avg $41.58/txn)
-- **Fraud vs legitimate**: 1,219 fraud (0.81%) vs 148,781 legitimate
-- **Fraud amount share**: $239,040.31 fraud vs $5,997,500.50 legitimate
-  (**3.83%** of total transaction value, despite fraud being only 0.81%
-  of transaction *count* - fraudulent transactions are disproportionately
-  larger)
-- **High-value fraud rate**: transactions ≥ $500 have a **32.97%** fraud
-  rate (91 of 276) vs **0.75%** for normal-value transactions - a >40x
-  difference, consistent with the amount-inflation pattern the synthetic
-  generator models on real card-testing/cash-out fraud behavior
-- **Highest-risk categories** (MapReduce `category_aggregation.tsv` /
-  Hive query 4): `shopping_net` (2.25%), `misc_net` (2.19%), `travel`
-  (2.17%), `grocery_net` (1.98%) fraud rate, vs ~0.3-0.4% for all other
-  categories - the four categories the synthetic generator marks
-  "high-risk" are correctly the four highest by observed fraud rate
-- **Customer/merchant-level aggregation**: top spenders and top
-  fraud-amount merchants listed in `results/hive_analytics/09_*.csv` and
-  `10_*.csv`, and in `results/mapreduce_output/customer_aggregation.tsv`
+- **Default location**: extract the Kaggle archive so the files are at `%USERPROFILE%\Downloads\archive (5)\fraudTrain.csv` and `...\fraudTest.csv`.
+- **Any other location**: set the variables in the PowerShell session before running anything:
 
-Full model comparison: `results/metrics/model_comparison.json`.
+  ```powershell
+  $env:BDA_TRAIN_CSV = "E:\datasets\fraud\fraudTrain.csv"
+  $env:BDA_TEST_CSV  = "E:\datasets\fraud\fraudTest.csv"
+  ```
 
-## 17. Visualizations
+If a file is missing or unreadable, preprocessing and the MapReduce driver stop with an error naming the path and these variables.
 
-Generated by `src/visualization/plots.py` into `results/figures/`:
+### Downloading
 
-1. `01_fraud_vs_legit_count.png` - fraud vs legitimate transaction counts
-2. `02_fraud_amount_distribution.png` - amount distribution, fraud vs legit
-3. `03_transactions_over_time.png` - daily transaction/fraud volume
-4. `04_fraud_rate_by_hour.png` - fraud rate by hour of day
-5. `05_top_suspicious_categories.png` - categories ranked by fraud rate
-6. `06_top_suspicious_merchants.png` - merchants ranked by fraud rate
-7. `07_high_value_fraud_rate.png` - high-value vs normal fraud rate
-8. `08_confusion_matrix.png` - best model's confusion matrix
-9. `09_model_comparison.png` - precision/recall/F1/ROC-AUC/PR-AUC across models
+1. Sign in to Kaggle, open the dataset page above, and download the archive.
+2. Extract `fraudTrain.csv` and `fraudTest.csv` (about 351 MB and 150 MB).
+3. Place them at the default location or set the two variables as shown above.
 
-## 18. How to Run the Project
+## 7. Installation
 
-### Prerequisites
-- Windows 11 (or any OS - only the `.ps1` orchestrator is Windows-specific)
-- Python 3.11 (a newer default Python may not yet support all pinned
-  packages - see Section 19)
-- ~2 GB free disk for the venv + dependencies
+All commands below are for **Windows PowerShell**, run from the project root.
 
-### Setup
+**Prerequisites**
+
+- Python 3.11 (the version the project was developed and tested with; the `py` launcher is used below). Very new Python releases may not yet be supported by PySpark/XGBoost.
+- Git.
+- **For the Spark steps only**: a JDK 17 or 21. PySpark 4.x does not start on newer JDKs; see [`docs/SPARK_SETUP.md`](docs/SPARK_SETUP.md).
+- About 2 GB of disk for the venv, plus about 150 MB for the cleaned Parquet file.
 
 ```powershell
-cd D:\PROJECTS\BDA
+# 1. Clone and enter the project
+git clone https://github.com/praveen-ramanan/Credit-Card-Fraud-Detection-Using-Transaction-Analytics.git
+cd Credit-Card-Fraud-Detection-Using-Transaction-Analytics
+
+# 2. Create the virtual environment (the pipeline script expects it at .\venv)
 py -3.11 -m venv venv
+
+# 3. Install dependencies
 .\venv\Scripts\python.exe -m pip install --upgrade pip
 .\venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
 
-### Run everything
+Activating the venv is optional, because every command in this README calls `.\venv\Scripts\python.exe` directly. To activate it anyway:
 
 ```powershell
-.\scripts\run_pipeline.ps1
+.\venv\Scripts\Activate.ps1
 ```
 
-### Or run stages individually
+If PowerShell blocks this script, first run `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass`, which applies to the current window only.
+
+Then download the dataset as described in [Dataset and setup](#6-dataset-and-setup).
+
+## 8. Running the pipeline
+
+### Complete pipeline
 
 ```powershell
-.\venv\Scripts\python.exe scripts\generate_synthetic_data.py
-.\venv\Scripts\python.exe src\preprocessing\clean_data.py
+powershell -ExecutionPolicy Bypass -File .\scripts\run_pipeline.ps1
+```
+
+(`.\scripts\run_pipeline.ps1` works directly if your execution policy already allows local scripts.)
+
+This runs the seven steps in [Architecture and workflow](#3-architecture-and-workflow). Things to know:
+
+- **JDK path**: the Spark steps point `JAVA_HOME` at `C:\Program Files\Java\jdk-21.0.10`, which is hard-coded as `$SparkJavaHome` in the script. Edit that line if your JDK 17/21 is elsewhere. If the path does not exist, the script prints a warning, and the Spark steps fail unless your default Java is compatible.
+- **Paths with parentheses**: Spark's Windows launch scripts fail when the project path contains `(` or `)` (for example `Credit Card(BDA)`). The script detects this and runs the Spark steps through a directory junction at `%TEMP%\bda_venv` that links to the venv. Nothing is copied.
+- **MongoDB**: the NoSQL step uses a MongoDB server if one is configured or reachable; otherwise it uses `mongomock` ([details](#nosql-mongodb)).
+- **Runtime**: cleaning takes about 10 s, MapReduce about 30 s, and training all three models about 1 minute on an 18-thread laptop.
+
+### Individual stages
+
+```powershell
+.\venv\Scripts\python.exe src\preprocessing\clean_data.py        # -> data\processed\transactions_clean.parquet
 .\venv\Scripts\python.exe src\mapreduce\local_driver.py category_aggregation
 .\venv\Scripts\python.exe src\mapreduce\local_driver.py customer_aggregation
-
-# Spark steps need a Spark-compatible JDK - see Section 19/docs/SPARK_SETUP.md
-$env:JAVA_HOME = "C:\Program Files\Java\jdk-21.0.10"
-$env:PATH = "$env:JAVA_HOME\bin;" + $env:PATH
-.\venv\Scripts\python.exe src\spark\data_processing.py
-.\venv\Scripts\python.exe src\spark\hive_style_analytics.py
-
-.\venv\Scripts\python.exe src\fraud_detection\train_model.py
-.\venv\Scripts\python.exe src\nosql\store_analytics.py
+.\venv\Scripts\python.exe src\fraud_detection\train_model.py     # needs the cleaned Parquet
+.\venv\Scripts\python.exe src\fraud_detection\verify_model.py    # re-checks the saved model, no retraining
+.\venv\Scripts\python.exe src\nosql\store_analytics.py           # needs the test scores (and Spark output for category docs)
 .\venv\Scripts\python.exe src\visualization\plots.py
 ```
 
-### Run tests
+Spark stages: set a compatible JDK first, in the same PowerShell window.
 
 ```powershell
-.\venv\Scripts\python.exe -m pytest tests\ -v
+$env:JAVA_HOME = "C:\Program Files\Java\jdk-21.0.10"   # your JDK 17/21 path
+$env:PATH = "$env:JAVA_HOME\bin;" + $env:PATH
+.\venv\Scripts\python.exe src\spark\data_processing.py
+.\venv\Scripts\python.exe src\spark\hive_style_analytics.py
 ```
 
-## 19. Windows / Local Setup Notes
+If your project path contains parentheses, run the two Spark stages through `run_pipeline.ps1` instead, or clone into a path without parentheses.
 
-- **Python version**: this machine's default `python` resolved to 3.14,
-  which is too new for reliable PySpark/XGBoost compatibility; the venv
-  was built with `py -3.11` instead. Use whichever 3.10-3.12 interpreter
-  is available via `py -0p` if 3.11 isn't present.
-- **Java version for Spark**: this machine's default JDK is 26, which
-  Spark 4.2 cannot start under (`NoClassDefFoundError:
-  ...ByteArrayMethods`, confirmed during development). A JDK 21
-  installation at `C:\Program Files\Java\jdk-21.0.10` was used instead by
-  setting `JAVA_HOME` before running any Spark script - see
-  `docs/SPARK_SETUP.md`. If no compatible JDK exists on your machine,
-  install Eclipse Temurin 17 or 21 LTS.
-- **PowerShell stderr caveat**: `scripts/run_pipeline.ps1` deliberately
-  does not set `$ErrorActionPreference = "Stop"`, because PowerShell 5.1
-  wraps a native command's stderr output (which Spark uses constantly for
-  ordinary INFO/WARN logging) as a terminating error under that setting,
-  which would abort the pipeline on successful runs. Failures are instead
-  detected via `$LASTEXITCODE`.
-- **No Hadoop/Hive/MongoDB required** to build, run, or demo this
-  project end-to-end - every stage has a working local mode. Real-cluster
-  instructions are in `docs/HDFS_SETUP.md`, `docs/MAPREDUCE_SETUP.md`,
-  `docs/HIVE_SETUP.md`, `docs/SPARK_SETUP.md`, `docs/NOSQL_SETUP.md`.
+To score one example transaction from the command line:
 
-## 20. Expected Outputs
+```powershell
+.\venv\Scripts\python.exe src\fraud_detection\inference.py
+```
 
-Running `scripts/run_pipeline.ps1` end to end produces:
+`notebooks/train_model_colab.ipynb` runs the cleaning and training stages on Google Colab. It clones the GitHub repository, so it uses whatever version of the code has been pushed there. It downloads the dataset with `kagglehub`, which needs Kaggle credentials on the Colab runtime. The last cell prints the model and metrics as base64 so they can be copied back into `results/`.
 
-- `data/raw/transactions.csv`, `data/processed/transactions_clean.{csv,parquet}`
-- `results/mapreduce_output/*.tsv` (2 files)
-- `results/spark_output/*.csv`, `results/hive_analytics/*.csv` (12 files)
-- `results/metrics/model_comparison.json`
-- `results/models/best_model.joblib`
-- `results/fraud_detection/scored_transactions.csv`
-- `results/figures/*.png` (9 charts)
+## 9. Launching the dashboard
 
-## 21. Limitations
+The dashboard reads the pipeline outputs and never retrains. Run the pipeline first: at minimum preprocessing and training, and also the MapReduce, Spark and NoSQL stages for every page to be complete.
 
-- Results are computed on a **synthetic** dataset (see Section 5); the
-  fraud-generating rules are simplified compared to real-world fraud
-  behavior, and absolute metric values should not be read as
-  representative of a production system's performance.
-- Precision at the default 0.5 threshold is low (3.6-7.6%) because of the
-  extreme class imbalance combined with intentionally noisy synthetic
-  signal; a production system would tune the decision threshold against
-  a real cost model (false-positive review cost vs. false-negative fraud
-  loss), which this project demonstrates the mechanism for (Section 15)
-  but does not have real business costs to optimize against.
-- This project does **not** implement real-time/streaming fraud
-  detection (e.g. Kafka + Spark Structured Streaming) - all processing is
-  batch, and no such claim is made anywhere in this documentation.
-- The Hive stage's authoritative implementation is real `.hql`, but the
-  results actually reported here were produced by Spark SQL locally
-  (clearly labeled throughout) since a Hive cluster isn't available on
-  the development machine.
-- The MongoDB stage ran against `mongomock` during development (no
-  MongoDB server was installed on the development machine); the pymongo
-  code path is real and switches automatically to a real server if one
-  is configured (Section 12 / `docs/NOSQL_SETUP.md`).
+```powershell
+.\venv\Scripts\python.exe -m streamlit run app.py
+```
 
-## 22. Future Enhancements
+Then open **<http://localhost:8501>**. The app runs locally and is not deployed publicly. Using `python -m streamlit` guarantees the venv's packages are used. A bare `streamlit run app.py` works only when the venv is activated.
 
-- Swap in the real Kaggle Sparkov dataset (or a larger synthetic run) for
-  a final-submission results pass.
-- Add Spark Structured Streaming for genuinely real-time transaction
-  scoring, with the trained model served via a Spark UDF.
-- Add SMOTE/ADASYN-based oversampling as a second imbalance-handling
-  strategy to compare against `class_weight`/`scale_pos_weight`.
-- Add model explainability (SHAP values) for individual fraud alerts.
-- Containerize the Hadoop/Hive/MongoDB stack with Docker Compose for a
-  one-command real-cluster demo instead of manual WSL2 setup.
+| Page | What it shows | Data source |
+|---|---|---|
+| **Overview** | Train/test summary table (rows, fraud, rate, period, cards, merchants, value); dataset selector (fraudTrain / fraudTest / both); totals, fraud rate, amount statistics; fraud vs legitimate counts; amount distribution by class; daily volume; daily fraud count with 7-day fraud rate | Cleaned Parquet |
+| **Transaction analytics** | Dataset selector plus sidebar filters (date, category, state, gender, amount); fraud rate by category, by hour and by amount band; high-value segment; merchant and card summaries (cards masked to the last 4 digits); browser for the Hive/Spark SQL, Spark and MapReduce output files | Cleaned Parquet, `results/hive_analytics`, `spark_output`, `mapreduce_output` |
+| **Fraud detection** | Form for one transaction (amount, date/time, category, state, gender, date of birth, city population, customer and merchant coordinates); buttons to load a real legitimate or fraud example from `fraudTest.csv`; fraud probability, risk level, derived model inputs | Saved model via `inference.py` |
+| **Model performance** | Final `fraudTest.csv` metrics (ROC-AUC, PR-AUC, precision, recall, F1, false positives/negatives), confusion matrix, ROC and precision-recall curves; threshold explorer (labelled as illustration only); validation comparison table, chart and per-model confusion matrices | `model_comparison.json`, `scored_test_transactions.parquet` |
+| **Fraud alerts** | The 500 highest-scored `fraudTest.csv` transactions in the `fraud_alerts` collection; filters by category, state, actual label and minimum probability; sorting; the generated MongoDB `find()` query; model prediction vs actual label; alert precision; CSV download | MongoDB, or mongomock loaded from the test scores |
+| **CSV analysis** | Upload Kaggle-schema rows; validation report; risk-level and probability distributions; ROC-AUC, PR-AUC, precision and recall if an `is_fraud` column is present; scored CSV download; template CSV download | Saved model via `inference.py` |
 
-## 23. Syllabus-to-Project Mapping
+Model outputs are risk scores, not verified fraud outcomes. The pages label model predictions separately from the dataset's actual `is_fraud` labels.
 
-| Syllabus unit | Where demonstrated |
+If an output file is missing, the page names the file and the command that creates it. If the saved model predates the current feature schema, the app shows a "retrain" error instead of using it.
+
+Streamlit's default upload limit is 200 MB, so `fraudTest.csv` (150 MB) can be uploaded on the CSV analysis page but the full `fraudTrain.csv` (351 MB) cannot. Rows from `fraudTrain.csv` were also seen in training, so their scores would be optimistic.
+
+## 10. Evaluation metrics and results
+
+All values below are copied from `results/metrics/model_comparison.json`, produced by `train_model.py`.
+
+### Validation (model selection)
+
+Latest 20% of `fraudTrain.csv`: 259,335 transactions, 1,538 fraud. "@thr" is each model's own validation F1-optimal threshold.
+
+| Model | ROC-AUC | PR-AUC | Precision @0.5 | Recall @0.5 | Threshold | Precision @thr | Recall @thr | F1 @thr |
+|---|---|---|---|---|---|---|---|---|
+| Logistic Regression | 0.9452 | 0.1984 | 0.040 | 0.825 | 0.924 | 0.304 | 0.560 | 0.394 |
+| Random Forest | 0.9939 | 0.8348 | 0.399 | 0.923 | 0.766 | 0.791 | 0.743 | 0.766 |
+| **XGBoost (selected)** | **0.9980** | **0.8986** | 0.471 | 0.930 | **0.949** | 0.878 | 0.803 | **0.839** |
+
+### Final test (`fraudTest.csv`)
+
+The selected XGBoost model was scored on all 555,719 transactions (2,145 fraud) at the validation-chosen threshold of 0.9493.
+
+| Metric | Value |
 |---|---|
-| Big Data fundamentals | Section 3-6 (motivation, volume/velocity/variety framing) |
-| Hadoop architecture | `docs/HDFS_SETUP.md`, `docs/MAPREDUCE_SETUP.md` |
-| HDFS | `docs/HDFS_SETUP.md`, `scripts/hdfs_ingest.sh`, `config/config.py` path layer |
-| MapReduce | `src/mapreduce/*` (real Hadoop Streaming mapper/reducer + local driver) |
-| NoSQL (MongoDB) | `src/nosql/*`, `docs/NOSQL_SETUP.md` |
-| Hive | `src/hive/hql/*.hql`, `docs/HIVE_SETUP.md` |
-| Apache Spark | `src/spark/spark_session.py`, `src/spark/data_processing.py` |
-| Spark DataFrames & SQL | `src/spark/data_processing.py`, `src/spark/hive_style_analytics.py` |
-| Data analytics & visualization | `src/visualization/plots.py`, Section 16-17 |
-| Machine learning | `src/fraud_detection/*`, Section 14-15 |
+| ROC-AUC | 0.9970 |
+| PR-AUC (average precision) | 0.8554 |
+| Precision | 0.8127 |
+| Recall | 0.7767 |
+| F1 | 0.7943 |
+| Confusion matrix | TP 1,666 · FP 384 · FN 479 · TN 553,190 |
+| For comparison, at threshold 0.5 | Precision 0.3689 · recall 0.9152 · FP 3,358 · FN 182 |
 
-## 24. Viva Preparation
+How to read these numbers:
 
-See `docs/viva_questions.md` for likely questions and concise, technically
-accurate answers covering the Big Data rationale, each technology's role,
-and the fraud-detection methodology.
+- Of the transactions the model flags in the later, unseen test period, 81% are fraud, and it finds 78% of all fraud.
+- Test PR-AUC (0.855) is lower than validation PR-AUC (0.899). The test period also has a lower fraud rate (0.39% vs 0.59%).
+- The threshold is a trade-off: at 0.5 the model catches more fraud but raises almost nine times as many false alarms.
+- ROC-AUC alone is misleading under this imbalance. Logistic Regression's validation ROC-AUC of 0.945 looks reasonable, but its PR-AUC is only 0.198. This is why PR-AUC is used for model selection.
+- These figures come from Sparkov-simulated data. They do not establish performance on real banking transactions.
 
----
+`verify_model.py` reloads the saved model, re-scores `fraudTest.csv`, and confirms that these test metrics and the confusion matrix are reproduced.
 
-## Project Structure
+## 11. Analytics results
+
+These come from the Spark SQL (Hive-equivalent) outputs in `results/hive_analytics/` and the MapReduce outputs in `results/mapreduce_output/`, over all 1,852,394 transactions in both files. Fraud figures use the dataset's actual labels.
+
+| Measure | Value |
+|---|---|
+| Total transactions / value | 1,852,394 / $129,785,332.01 (average $70.06) |
+| Fraud vs legitimate | 9,651 fraud vs 1,842,743 legitimate |
+| Fraud share of total value | 3.946% ($5,121,413.29), versus 0.52% of transaction count |
+| Fraud rate, amount >= $500 | 21.58% (4,684 of 21,709) vs 0.27% below $500 |
+| Highest fraud-rate categories | `shopping_net` 1.59%, `misc_net` 1.30%, `grocery_pos` 1.27% |
+| Train vs test fraud rate | 0.579% vs 0.386% |
+| MapReduce customer aggregation | 999 anonymized cards (SHA-256 prefix, no raw card numbers) |
+
+Charts generated by `src/visualization/plots.py` into `results/figures/`:
+
+| File | Content |
+|---|---|
+| `01_fraud_vs_legit_count.png` | Fraud vs legitimate counts (log scale) |
+| `02_fraud_amount_distribution.png` | Amount distribution by class |
+| `03_transactions_over_time.png` | Daily transactions and daily fraud |
+| `04_fraud_rate_by_hour.png` | Fraud rate by hour of day |
+| `05_top_suspicious_categories.png` | Categories by fraud rate |
+| `06_top_suspicious_merchants.png` | Merchants by fraud rate (at least 20 transactions) |
+| `07_high_value_fraud_rate.png` | High-value vs normal fraud rate |
+| `08_confusion_matrix.png` | Selected model on `fraudTest.csv` at the validation threshold |
+| `09_model_comparison.png` | Validation metrics across the three models |
+
+## 12. Project structure
 
 ```
-BDA/
-├── config/                    # Central path/settings config (no hardcoded paths)
+.
+├── app.py                         Streamlit entry point (page navigation)
+├── config/config.py               Paths, dataset locations (BDA_TRAIN_CSV/BDA_TEST_CSV), column names,
+│                                  MongoDB/Spark settings, validation fraction, random seed
 ├── data/
-│   ├── raw/                   # transactions.csv (synthetic or real Kaggle CSV)
-│   └── processed/             # cleaned CSV + Parquet
-├── docs/                      # Setup guides per Big Data component + dataset + viva
-├── notebooks/                 # (optional) exploratory analysis
+│   ├── raw/                       Not used by the pipeline (the Kaggle CSVs are read in place)
+│   └── processed/                 transactions_clean.parquet (generated, git-ignored)
+├── docs/                          DATASET, HDFS/MapReduce/Hive/Spark/NoSQL setup guides,
+│                                  DOC2 progress report, viva question notes
+├── notebooks/train_model_colab.ipynb   Clean + train on Google Colab
 ├── results/
-│   ├── figures/                9 analytics charts (PNG)
-│   ├── hive_analytics/         Hive-equivalent query outputs (CSV)
-│   ├── mapreduce_output/       MapReduce job outputs (TSV)
-│   ├── metrics/                model_comparison.json
-│   ├── models/                 best_model.joblib
-│   ├── spark_output/           Spark DataFrame aggregation outputs (CSV)
-│   └── fraud_detection/        scored_transactions.csv
-├── scripts/                   # generate_synthetic_data.py, run_pipeline.ps1, hdfs_ingest.sh
+│   ├── figures/                   9 PNG charts
+│   ├── hive_analytics/            11 Spark SQL (Hive-equivalent) query outputs
+│   ├── mapreduce_output/          category_aggregation.tsv, customer_aggregation.tsv
+│   ├── spark_output/              category_summary.csv, state_summary.csv
+│   ├── metrics/                   model_comparison.json
+│   ├── models/                    best_model.joblib (generated, git-ignored)
+│   └── fraud_detection/           scored_test_transactions.parquet (generated, git-ignored)
+├── scripts/
+│   ├── run_pipeline.ps1           End-to-end local pipeline (Windows PowerShell)
+│   └── hdfs_ingest.sh             HDFS upload commands for a real Hadoop install
 ├── src/
-│   ├── preprocessing/          clean_data.py
-│   ├── mapreduce/               category_aggregation/, customer_aggregation/, local_driver.py
-│   ├── hive/hql/                 create_tables.hql, analytics_queries.hql
-│   ├── spark/                    spark_session.py, data_processing.py, hive_style_analytics.py
-│   ├── nosql/                    mongo_client.py, store_analytics.py
-│   ├── fraud_detection/          features.py, train_model.py
-│   └── visualization/            plots.py
-├── tests/                      9 unit tests (preprocessing, features, MapReduce)
-├── requirements.txt
-├── .gitignore
-└── README.md
+│   ├── preprocessing/clean_data.py      Load, validate, clean, derive features, save Parquet
+│   ├── mapreduce/                       category_ and customer_aggregation mapper/reducer, local_driver.py
+│   ├── hive/hql/                        create_tables.hql, analytics_queries.hql
+│   ├── spark/                           spark_session.py, data_processing.py, hive_style_analytics.py
+│   ├── fraud_detection/                 features.py, train_model.py, inference.py, verify_model.py
+│   ├── nosql/                           mongo_client.py, store_analytics.py
+│   ├── visualization/plots.py           Static charts
+│   └── dashboard/                       data.py (cached loaders), views.py (page rendering)
+├── tests/                         pytest suite (see Testing)
+└── requirements.txt
 ```
 
-## Setup Commands
+Generated data and model files are excluded by `.gitignore`. On a fresh clone, run the pipeline before starting the dashboard. The metrics JSON, the charts and the analytics CSV/TSV outputs are tracked.
+
+## 13. Big Data components
+
+| Component | Implemented and run locally | Real-cluster material (not executed in this project) |
+|---|---|---|
+| HDFS | Local `data/` and `results/` folders stand in for HDFS paths; all paths are resolved in `config/config.py` | `scripts/hdfs_ingest.sh` (bash, WSL2/Linux), [`docs/HDFS_SETUP.md`](docs/HDFS_SETUP.md) |
+| MapReduce | Two Hadoop-Streaming-compatible jobs, run by `local_driver.py` with one map task per Kaggle file and a Python shuffle/sort | `hadoop jar hadoop-streaming-*.jar` commands in [`docs/MAPREDUCE_SETUP.md`](docs/MAPREDUCE_SETUP.md) |
+| Hive | The same queries executed through Spark SQL by `hive_style_analytics.py` | `create_tables.hql` (external Parquet table) and `analytics_queries.hql`, which have not been run on a Hive engine; [`docs/HIVE_SETUP.md`](docs/HIVE_SETUP.md) |
+| Spark | `local[*]` SparkSession: schema inspection, filters, `groupBy().agg()`, Spark SQL temp views | Set `BDA_SPARK_MASTER` to a cluster master; [`docs/SPARK_SETUP.md`](docs/SPARK_SETUP.md) |
+| NoSQL | MongoDB documents and aggregation pipeline, via a real server or `mongomock` | [`docs/NOSQL_SETUP.md`](docs/NOSQL_SETUP.md) |
+
+### NoSQL (MongoDB)
+
+`src/nosql/store_analytics.py` writes two collections:
+
+- **`fraud_alerts`**: the 500 highest-probability `fraudTest.csv` transactions. Each is a document with nested `customer` and `merchant` sub-documents, the model probability and decision, and the actual label.
+- **`category_analytics`**: the Spark category summary.
+
+It then runs a `find().sort().limit()` query and a `$group` aggregation pipeline.
+
+Connection behaviour (`src/nosql/mongo_client.py`), configured with environment variables:
+
+| Variable | Effect |
+|---|---|
+| `BDA_MONGO_URI` | MongoDB server URI (local or Atlas). If set and unreachable, the code raises an error instead of falling back. |
+| `BDA_MONGO_DB` | Database name (default `fraud_analytics`) |
+| `BDA_MONGO_FALLBACK` | Set to `0` to forbid the `mongomock` fallback |
+
+With no URI set and nothing listening on `mongodb://localhost:27017`, the in-memory `mongomock` is used and reported as the backend. Its data does not persist between runs.
+
+## 14. Testing
 
 ```powershell
-py -3.11 -m venv venv
-.\venv\Scripts\python.exe -m pip install --upgrade pip
-.\venv\Scripts\python.exe -m pip install -r requirements.txt
+.\venv\Scripts\python.exe -m pytest -q
 ```
 
-## Run Commands
+The suite has 49 tests:
 
-```powershell
-.\scripts\run_pipeline.ps1
-```
+| File | Covers |
+|---|---|
+| `test_preprocessing.py` | Deduplication, invalid amounts, missing-value fill, merchant-prefix stripping, unnamed index column, missing-file error, derived columns, haversine distance |
+| `test_features.py` | Feature-matrix shape and types, label excluded, binary label |
+| `test_mapreduce.py` | Mapper → sort → reducer subprocess pipelines, card anonymization |
+| `test_data_pipeline.py` | Kaggle CSV headers and labels, shared schema, train/test separation and time order, chronological split, consistency of validation and test metrics |
+| `test_inference.py` | Scoring, one-hot alignment, input validation, mixed batches, bundle schema/threshold, stale-model rejection |
+| `test_mongo_client.py` | MongoDB / mongomock connection policy |
+| `test_dashboard.py` | Every page renders without errors, prediction form, invalid-date rejection, alert query, train/test selector, no stale synthetic-data text |
 
-## What Each Major Component Demonstrates (for the college review)
+Tests that need the Kaggle files, the cleaned Parquet, or the trained model skip themselves when those are missing. The Spark scripts and full training runs are not exercised by pytest. They are verified by running them, and `verify_model.py` checks the saved model's outputs.
 
-- **MapReduce** (`src/mapreduce/`): the mapper/shuffle-sort/reducer
-  programming model itself, with real Hadoop-Streaming-compatible scripts.
-- **Hive** (`src/hive/hql/`): SQL-on-Hadoop, external tables over HDFS files.
-- **Spark** (`src/spark/`): in-memory distributed DataFrame processing and
-  Spark SQL, run live during the demo.
-- **NoSQL** (`src/nosql/`): why fraud-alert data (nested, variable-shape)
-  suits a document store, plus MongoDB's own aggregation pipeline.
-- **ML** (`src/fraud_detection/`): imbalanced binary classification done
-  correctly - class-weighting, PR-AUC-driven model selection, threshold
-  tuning, and an explicit explanation of why accuracy is the wrong metric.
-- **Visualization** (`src/visualization/`): the analytics questions a bank
-  fraud team would actually ask, answered visually.
+## 15. Limitations
 
-## Remaining Manual Setup for a Real Cluster Demo
+- **Simulated data**: the Sparkov-generated transactions have cleaner fraud patterns than real card fraud, so the metrics do not represent production performance.
+- **Per-transaction features only**: there are no per-card history features, such as spend compared with the card's usual amount or time since the last transaction. Such features would require a transaction-history store at prediction time.
+- **Threshold choice**: the threshold maximises validation F1. A real deployment would set it from business costs (review cost vs fraud loss).
+- **No refit after selection**: the selected model is not retrained on the validation rows, so the latest 3.5 months of training data are not used for fitting.
+- **Batch only**: there is no streaming or real-time scoring.
+- **No live cluster**: Hive, HDFS and cluster-mode Spark/MapReduce are provided as scripts and documentation but were not executed against real infrastructure. The Hive results come from Spark SQL.
+- **MongoDB not persistent locally**: without a server, alerts live in `mongomock` and disappear when the process ends.
+- **Windows-specific paths**: the dataset default path (`Downloads\archive (5)`) and the JDK path in `run_pipeline.ps1` are specific to the development machine. Use the environment variables and edit `$SparkJavaHome` as needed.
 
-Everything above already runs locally. Only needed if demonstrating
-against real infrastructure:
+## 16. Future improvements
 
-1. **Hadoop/HDFS**: WSL2 + pseudo-distributed Hadoop (`docs/HDFS_SETUP.md`).
-2. **Hive**: install on top of the above (`docs/HIVE_SETUP.md`).
-3. **Spark on a cluster**: point `BDA_SPARK_MASTER` at `yarn` or a Spark
-   master URL (`docs/SPARK_SETUP.md`); local mode needs no cluster, only
-   the JDK 21 fix already documented.
-4. **MongoDB**: local install or free Atlas tier (`docs/NOSQL_SETUP.md`);
-   `mongomock` already covers the local/zero-install demo.
+- Per-card velocity and behaviour features, backed by a feature store for real-time scoring.
+- Spark Structured Streaming (for example with Kafka) for streaming transaction scoring.
+- Cost-based threshold selection and probability calibration.
+- Model explanations (for example SHAP) for individual alerts.
+- A Docker Compose environment to run HDFS, Hive and MongoDB for a real-cluster demo.
+- Removing the unused dependencies from `requirements.txt`.
+
+## 17. References and dataset attribution
+
+- **Dataset**: `kartik2112`, *Credit Card Transactions Fraud Detection Dataset*, Kaggle: <https://www.kaggle.com/datasets/kartik2112/fraud-detection>. Simulated with the Sparkov Data Generation tool by Brandon Harris: <https://github.com/namebrandon/Sparkov_Data_Generation>. The dataset is used under the terms stated on its Kaggle page and is not redistributed in this repository.
+- scikit-learn: <https://scikit-learn.org> · XGBoost: <https://xgboost.readthedocs.io> · Apache Spark: <https://spark.apache.org> · Apache Hadoop: <https://hadoop.apache.org> · Apache Hive: <https://hive.apache.org> · MongoDB: <https://www.mongodb.com> · Streamlit: <https://streamlit.io>
+- Further project documentation: [`docs/`](docs/), including viva preparation notes in [`docs/viva_questions.md`](docs/viva_questions.md).
