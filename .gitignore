@@ -48,6 +48,7 @@ Thumbs.db
 *.key
 credentials*.json
 secrets*
+.streamlit/secrets.toml
 
 # Logs / temp
 *.log

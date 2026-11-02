@@ -81,3 +81,16 @@ def test_no_synthetic_data_references_in_app():
         at = _app(page)
         text = " ".join(str(el.value) for el in [*at.markdown, *at.caption, *at.info, *at.sidebar.caption])
         assert "synthetic" not in text.lower(), page
+
+
+@pytest.mark.parametrize("button, risk", [("Load a fraud example", "High"), ("Load a legitimate example", "Low")])
+def test_examples_are_fixed_and_scored_as_labelled(button, risk):
+    captions = []
+    for _ in range(2):  # the same transaction every time
+        at = _app("Fraud detection")
+        next(b for b in at.button if b.label == button).click().run()
+        at.button(key="FormSubmitter:predict-Assess transaction").click().run()
+        assert not at.exception, at.exception
+        assert any(f">{risk}</span>" in m.value for m in at.markdown)
+        captions.append(next(c.value for c in at.caption if c.value.startswith("Form filled from")))
+    assert captions[0] == captions[1]

@@ -319,7 +319,7 @@ The dashboard reads the pipeline outputs and never retrains. It works straight f
 .\venv\Scripts\python.exe -m streamlit run app.py
 ```
 
-Then open **<http://localhost:8501>**. Using `python -m streamlit` guarantees the venv's packages are used. A bare `streamlit run app.py` works only when the venv is activated.
+Then open **<http://localhost:8501>**. To host it on Streamlit Community Cloud, follow [`docs/DEPLOY_STREAMLIT.md`](docs/DEPLOY_STREAMLIT.md). Using `python -m streamlit` guarantees the venv's packages are used. A bare `streamlit run app.py` works only when the venv is activated.
 
 | Page | What it shows | Data source |
 |---|---|---|

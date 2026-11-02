@@ -278,8 +278,13 @@ FORM_DEFAULTS = {
 }
 
 
-def _load_example(df, fraud: bool):
-    row = df[df[cfg.LABEL_COL] == int(fraud)].sample(1).iloc[0]
+EXAMPLE_NOTES = {"fraud": "the earliest fraud the model flags", "legit": "the earliest legitimate one it scores Low"}
+
+
+def _load_example(df, kind: str):
+    trans_num = data.example_transaction_ids()[kind]
+    row = df[df[cfg.TRANSACTION_ID_COL] == trans_num].iloc[0]
+    fraud = kind == "fraud"
     known = inf.known_categorical_values(data.load_model()[0])
     ts = row[cfg.TIMESTAMP_COL]
     st.session_state.update({
@@ -289,7 +294,8 @@ def _load_example(df, fraud: bool):
         "f_dob": pd.Timestamp(row[cfg.DOB_COL]).date(), "f_city_pop": int(row[cfg.CITY_POP_COL]),
         "f_lat": float(row[cfg.LAT_COL]), "f_long": float(row[cfg.LONG_COL]),
         "f_merch_lat": float(row[cfg.MERCH_LAT_COL]), "f_merch_long": float(row[cfg.MERCH_LONG_COL]),
-        "f_example": f"`{row[cfg.TRANSACTION_ID_COL]}` from fraudTest.csv (actual label: {'fraud' if fraud else 'legitimate'})",
+        "f_example": f"`{row[cfg.TRANSACTION_ID_COL]}` from fraudTest.csv (actual label: {'fraud' if fraud else 'legitimate'}; "
+                     f"{EXAMPLE_NOTES[kind]})",
     })
 
 
@@ -307,9 +313,9 @@ def render_prediction():
     df = data.load_transactions("test")
     b = st.columns([1, 1, 3])
     if b[0].button("Load a legitimate example"):
-        _load_example(df, fraud=False)
+        _load_example(df, "legit")
     if b[1].button("Load a fraud example"):
-        _load_example(df, fraud=True)
+        _load_example(df, "fraud")
     if st.session_state.get("f_example"):
         b[2].caption(f"Form filled from dataset transaction {st.session_state['f_example']}.")
 

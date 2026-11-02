@@ -16,8 +16,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import streamlit as st
 
-from src.dashboard import data, views
-from src.fraud_detection.inference import StaleModelError
+from src.dashboard.settings_from_secrets import promote_secrets_to_env
+
+promote_secrets_to_env()  # before config is imported: BDA_* secrets become settings
+
+from src.dashboard import data, views  # noqa: E402
+from src.fraud_detection.inference import StaleModelError  # noqa: E402
 
 st.set_page_config(page_title="Fraud Analytics", page_icon=":credit_card:", layout="wide")
 

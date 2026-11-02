@@ -175,6 +175,24 @@ def load_test_set_scores():
     return scored[cfg.LABEL_COL].to_numpy(), scored["fraud_probability"].to_numpy()
 
 
+@st.cache_data(show_spinner="Selecting example transactions...")
+def example_transaction_ids() -> dict:
+    """{"fraud": trans_num, "legit": trans_num} for the Fraud detection page's
+    example buttons, fixed so a demo behaves the same every time: the earliest
+    fraudTest.csv fraud the model flags (predicted_fraud = 1; 78% of test fraud
+    is), and the earliest legitimate transaction it scores Low. Only rows
+    whose state the model was trained on, so the form reproduces the score."""
+    _require(SCORED_FILE)
+    cols = [cfg.TRANSACTION_ID_COL, cfg.TIMESTAMP_COL, cfg.STATE_COL, cfg.LABEL_COL, "fraud_probability", "predicted_fraud"]
+    s = pd.read_parquet(SCORED_FILE, columns=cols).sort_values([cfg.TIMESTAMP_COL, cfg.TRANSACTION_ID_COL])
+    _release_arrow_memory()
+    bundle, threshold = load_model()
+    s = s[s[cfg.STATE_COL].astype(str).isin(inf.known_categorical_values(bundle)["state"])]
+    fraud = s[(s[cfg.LABEL_COL] == 1) & (s["predicted_fraud"] == 1)]
+    legit = s[(s[cfg.LABEL_COL] == 0) & (s["fraud_probability"] < inf.elevated_cutoff(threshold))]
+    return {"fraud": fraud[cfg.TRANSACTION_ID_COL].iloc[0], "legit": legit[cfg.TRANSACTION_ID_COL].iloc[0]}
+
+
 @st.cache_data
 def load_pipeline_output(directory: Path, filename: str) -> pd.DataFrame:
     path = directory / filename
