@@ -110,12 +110,22 @@ there is no download at startup.
 | Symptom in the app or log | Likely cause | Fix |
 |---|---|---|
 | "Required pipeline output is missing ... `deploy/...`" | `deploy/` files not pushed | Check `git ls-files deploy` lists all three files and that `main` contains them |
-| "This app has gone over its resource limits" | Memory | Reboot. If it repeats, send me the log: the next step is dropping the 71 MB `trans_num` column from the dataset |
-| pip error or very slow build on `xgboost` | Large Linux wheel (bundles NVIDIA NCCL) | Replace `xgboost==3.2.0` with `xgboost-cpu==3.2.0` in `requirements.txt` |
+| "This app has gone over its resource limits" | Memory | Reboot. If it repeats, check the log; the next step is dropping the 71 MB `trans_num` column from the dataset |
+| pip error or very slow build on `xgboost` | Large Linux wheel (installs NVIDIA NCCL as a dependency) | Replace `xgboost==3.2.0` with `xgboost-cpu==3.2.0` in `requirements.txt` |
 | `StaleModelError` / model load error | Package versions differ from the pins | Check that Python 3.11 was selected and `requirements.txt` was not changed |
 | Fraud alerts: "Could not reach the MongoDB server configured in BDA_MONGO_URI" | Atlas network access or credentials | Allow `0.0.0.0/0`, check user/password, reboot |
 
 ## 6. After deploying
 
-Send the live URL back. Phase 3 runs `scripts/live_smoke_test.py` (Playwright)
-against it: every page, both example transactions, and the CSV upload.
+Check the live app by hand:
+
+1. The public URL opens and the sidebar lists the six sections.
+2. Each page loads without an error: Overview, Transaction analytics, Fraud
+   detection, Model performance, Fraud alerts and CSV analysis.
+3. Overview shows the data source `deploy/transactions_dashboard.parquet`, and
+   Fraud alerts shows **Backend: mongomock (in-memory demo)**.
+4. On Fraud detection, **Load a fraud example** then **Assess transaction**
+   gives risk level **High**, and **Load a legitimate example** then **Assess
+   transaction** gives **Low**.
+5. Model performance shows the stored test metrics (ROC-AUC 0.9970, PR-AUC
+   0.8554).
