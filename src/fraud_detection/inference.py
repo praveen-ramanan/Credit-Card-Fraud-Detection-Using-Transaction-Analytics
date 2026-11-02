@@ -37,7 +37,7 @@ from src.fraud_detection.features import (
 from src.fraud_detection.train_model import SCHEMA_VERSION
 from src.preprocessing.clean_data import add_derived_features
 
-MODEL_PATH = cfg.MODELS_DIR / "best_model.joblib"
+MODEL_PATH = cfg.MODEL_FILE
 METRICS_PATH = cfg.METRICS_DIR / "model_comparison.json"
 
 # Raw transaction fields the model's features are derived from.

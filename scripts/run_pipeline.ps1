@@ -36,7 +36,7 @@ Set-Location $ProjectRoot
 
 $Python = ".\venv\Scripts\python.exe"
 if (-not (Test-Path $Python)) {
-    Write-Error "venv not found. Run: py -3.11 -m venv venv ; .\venv\Scripts\python.exe -m pip install -r requirements.txt"
+    Write-Error "venv not found. Run: py -3.11 -m venv venv ; .\venv\Scripts\python.exe -m pip install -r requirements-pipeline.txt"
 }
 
 # Known-good JDK for Spark on this machine (LTS release). Change this path

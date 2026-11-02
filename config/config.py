@@ -42,6 +42,31 @@ RAW_SPLITS = {"train": TRAIN_CSV, "test": TEST_CSV}
 # vocabulary, scaling, model fit, threshold) uses split == "train" only.
 CLEANED_TRANSACTIONS_FILE = PROCESSED_DATA_DIR / "transactions_clean.parquet"
 SCORED_TEST_FILE = RESULTS_DIR / "fraud_detection" / "scored_test_transactions.parquet"
+MODEL_FILE = MODELS_DIR / "best_model.joblib"
+
+# ---------------------------------------------------------------------------
+# Dashboard artifacts (app.py)
+# ---------------------------------------------------------------------------
+# The full pipeline outputs above are gitignored. scripts/build_deploy_artifacts.py
+# writes slim, committed copies into deploy/ (all rows, only the dashboard's
+# columns) so the dashboard also runs from a clean checkout, e.g. on
+# Streamlit Community Cloud. The dashboard uses the full local artifact when
+# it exists and the deploy/ copy otherwise; an environment variable forces a
+# specific file.
+DEPLOY_DIR = PROJECT_ROOT / "deploy"
+
+
+def _dashboard_artifact(env_var: str, full: Path, deploy_name: str) -> Path:
+    if os.environ.get(env_var):
+        return Path(os.environ[env_var])
+    return full if full.exists() else DEPLOY_DIR / deploy_name
+
+
+DASHBOARD_TRANSACTIONS_FILE = _dashboard_artifact("BDA_DASHBOARD_DATA", CLEANED_TRANSACTIONS_FILE,
+                                                  "transactions_dashboard.parquet")
+DASHBOARD_MODEL_FILE = _dashboard_artifact("BDA_DASHBOARD_MODEL", MODEL_FILE, "best_model.joblib")
+DASHBOARD_SCORED_FILE = _dashboard_artifact("BDA_DASHBOARD_SCORED", SCORED_TEST_FILE,
+                                            "scored_test_transactions.parquet")
 
 # ---------------------------------------------------------------------------
 # Canonical transaction schema

@@ -48,7 +48,10 @@ def _chart(fig, height=360):
 
 
 def _with_class_label(df):
-    return df.assign(label=np.where(df[cfg.LABEL_COL] == 1, "Fraud", "Legitimate"))
+    # Categorical (1 byte per row), not 1.85M strings: this alone was the
+    # dashboard's peak memory with "Both files" selected.
+    label = pd.Categorical.from_codes(df[cfg.LABEL_COL].to_numpy(), ["Legitimate", "Fraud"])
+    return df.assign(label=label)
 
 
 def _rate_table(df, key):
@@ -77,6 +80,12 @@ def _dataset_selector():
 # --------------------------------------------------------------------------
 def render_overview():
     st.header("Overview")
+    if data.USING_DEPLOY_DATA:
+        st.caption(f"Data source: `{data.display_path(data.TRANSACTIONS_FILE)}`, the deployment copy of the cleaned "
+                   f"dataset. It keeps **every row** of both Kaggle files but only the {len(data.DASHBOARD_COLUMNS)} "
+                   f"columns this dashboard uses (built by `scripts/build_deploy_artifacts.py`).")
+    else:
+        st.caption(f"Data source: `{data.display_path(data.TRANSACTIONS_FILE)}` (full cleaned dataset).")
     st.subheader("Datasets")
     st.dataframe(data.dataset_summary(), hide_index=True, width="stretch",
                  column_config={"fraud_rate_pct": st.column_config.NumberColumn("fraud rate", format="%.3f%%"),
@@ -118,7 +127,8 @@ def render_overview():
                           showlegend=False, yaxis_title="Amount (USD)")
         _chart(fig)
 
-    daily = df.set_index(cfg.TIMESTAMP_COL).resample("D").agg(
+    # Only the needed columns: resampling the whole frame copies all of it (~160 MB).
+    daily = df[[cfg.TIMESTAMP_COL, cfg.LABEL_COL, cfg.AMOUNT_COL]].set_index(cfg.TIMESTAMP_COL).resample("D").agg(
         transactions=(cfg.LABEL_COL, "size"), fraud=(cfg.LABEL_COL, "sum"), value=(cfg.AMOUNT_COL, "sum"))
     daily["fraud_rate_7d_pct"] = 100 * daily["fraud"].rolling(7).sum() / daily["transactions"].rolling(7).sum()
     daily = daily.reset_index()
@@ -288,7 +298,7 @@ def render_prediction():
     bundle, threshold = data.load_model()
     known = inf.known_categorical_values(bundle)
     st.caption(f"Model: **{MODEL_LABELS.get(bundle['model_name'], bundle['model_name'])}** "
-               f"(`{inf.MODEL_PATH.relative_to(cfg.PROJECT_ROOT)}`). Features are derived with the same "
+               f"(`{data.display_path(data.MODEL_FILE)}`). Features are derived with the same "
                f"code used in training (`add_derived_features` + `build_features`). Trained on `fraudTrain.csv`; "
                f"decision threshold {threshold:.3f} chosen on the validation set.")
 
@@ -481,6 +491,7 @@ def render_alerts():
         st.error(f"MongoDB is not available, so no fraud alerts can be shown. {e}")
         return
     total = collection.count_documents({})
+    st.markdown(f"**Backend:** {'MongoDB' if backend == 'mongodb' else 'mongomock (in-memory demo)'}")
     if backend == "mongodb":
         st.success(f"Connected to MongoDB at `{cfg.MONGO_DB_NAME}.fraud_alerts` ({total:,} alert documents).")
     else:
