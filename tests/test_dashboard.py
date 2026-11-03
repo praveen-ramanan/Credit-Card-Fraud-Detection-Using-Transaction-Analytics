@@ -56,12 +56,27 @@ def test_prediction_form_rejects_invalid_dates():
     assert at.error and "date of birth must be before" in at.error[0].value
 
 
+def _metric(at, label):
+    return next(m for m in at.metric if m.label == label).value
+
+
 def test_alert_filters_query_mongo():
     at = _app("Fraud alerts")
-    at.selectbox[0].set_value("Fraud").run()
+    at.selectbox(key="alert_label").set_value("Fraud").run()
     assert not at.exception, at.exception
-    precision = next(m for m in at.metric if m.label == "Alert precision")
-    assert precision.value == "100.0%"
+    assert _metric(at, "Alert precision") == "100.0%"   # filtering on the label: 100% by definition
+
+
+def test_alert_page_default_matches_model_test_precision():
+    """Default view = the model's own alerts at its threshold, so the page must
+    show the test precision from model_comparison.json, not ~100%."""
+    import json
+    test = json.loads(inf.METRICS_PATH.read_text())["test"]
+    cm = test["confusion_matrix_at_threshold"]
+    at = _app("Fraud alerts")
+    assert not at.exception, at.exception
+    assert _metric(at, "Matching alerts") == f"{cm['tp'] + cm['fp']:,}"
+    assert _metric(at, "Alert precision") == f"{test['precision_at_threshold']:.1%}"
 
 
 @pytest.mark.parametrize("dataset, split", [("Training (fraudTrain.csv)", "train"), ("Test (fraudTest.csv)", "test")])

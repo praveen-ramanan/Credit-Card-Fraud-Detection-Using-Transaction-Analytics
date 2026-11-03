@@ -327,7 +327,7 @@ Then open **<http://localhost:8501>**. To host it on Streamlit Community Cloud, 
 | **Transaction analytics** | Dataset selector plus sidebar filters (date, category, state, gender, amount); fraud rate by category, by hour and by amount band; high-value segment; merchant and card summaries (cards masked to the last 4 digits); browser for the Hive/Spark SQL, Spark and MapReduce output files | Cleaned Parquet, `results/hive_analytics`, `spark_output`, `mapreduce_output` |
 | **Fraud detection** | Form for one transaction (amount, date/time, category, state, gender, date of birth, city population, customer and merchant coordinates); buttons to load a real legitimate or fraud example from `fraudTest.csv`; fraud probability, risk level, derived model inputs | Saved model via `inference.py` |
 | **Model performance** | Final `fraudTest.csv` metrics (ROC-AUC, PR-AUC, precision, recall, F1, false positives/negatives), confusion matrix, ROC and precision-recall curves; threshold explorer (labelled as illustration only); validation comparison table, chart and per-model confusion matrices | `model_comparison.json`, `scored_test_transactions.parquet` |
-| **Fraud alerts** | The 500 highest-scored `fraudTest.csv` transactions in the `fraud_alerts` collection; filters by category, state, actual label and minimum probability; sorting; the generated MongoDB `find()` query; model prediction vs actual label; alert precision; CSV download | MongoDB, or mongomock loaded from the test scores |
+| **Fraud alerts** | Every `fraudTest.csv` transaction scoring ≥ 0.5 in the `fraud_alerts` collection; risk band (High = the model's own alerts at its threshold, or High + Elevated), category, state, actual label and minimum-probability filters; sorting; the generated MongoDB `countDocuments()`, `find()` and `aggregate()` queries; alert counts and precision over all matches (the default High view reproduces the test precision); CSV download | MongoDB, or mongomock loaded from the test scores |
 | **CSV analysis** | Upload Kaggle-schema rows; validation report; risk-level and probability distributions; ROC-AUC, PR-AUC, precision and recall if an `is_fraud` column is present; scored CSV download; template CSV download | Saved model via `inference.py` |
 
 Model outputs are risk scores, not verified fraud outcomes. The pages label model predictions separately from the dataset's actual `is_fraud` labels.
@@ -336,15 +336,16 @@ If an output file is missing, the page names the file and the command that creat
 
 ### Deployment artifacts
 
-`scripts/build_deploy_artifacts.py` writes three committed files to `deploy/` from the full pipeline outputs, so the dashboard runs without the Kaggle CSVs or the 142 MB cleaned Parquet:
+`scripts/build_deploy_artifacts.py` writes four committed files to `deploy/` from the full pipeline outputs, so the dashboard runs without the Kaggle CSVs or the 142 MB cleaned Parquet:
 
-| File | Contents |
-|---|---|
-| `deploy/transactions_dashboard.parquet` | Every row of `transactions_clean.parquet` (train + test), only the 18 columns the dashboard reads, categorical text columns, losslessly downcast integers, zstd |
-| `deploy/scored_test_transactions.parquet` | `scored_test_transactions.parquet`, recompressed with zstd (same rows and columns) |
-| `deploy/best_model.joblib` | Identical copy of `results/models/best_model.joblib` |
+| File | Size | Contents |
+|---|---|---|
+| `deploy/transactions_dashboard.parquet` | 45.5 MB | Every row of `transactions_clean.parquet` (train + test), only the 17 columns the dashboard reads (no `trans_num`), categorical text columns, losslessly downcast integers, zstd |
+| `deploy/scored_test_transactions.parquet` | 19.2 MB | `scored_test_transactions.parquet`, recompressed with zstd (same rows and columns) |
+| `deploy/fraud_alerts.parquet` | 0.3 MB | The 5,321 scored test rows with fraud probability ≥ `ALERT_MIN_PROBABILITY` (0.5), only the columns of the `fraud_alerts` documents; the floor is stored in the Parquet metadata. The Fraud alerts page loads from it instead of reading the full scored file, and falls back to the scored file if it is missing or was built with a different floor |
+| `deploy/best_model.joblib` | 1.4 MB | Identical copy of `results/models/best_model.joblib` |
 
-The script checks each file against its source (row and fraud counts, every value) and fails if any file reaches 95 MB. Re-run it after retraining. Environment variables `BDA_DASHBOARD_DATA`, `BDA_DASHBOARD_MODEL` and `BDA_DASHBOARD_SCORED` force a specific file. The Overview page shows which transactions file is in use.
+The script checks each file against its source (row and fraud counts, every value) and fails if any file reaches 95 MB. Re-run it after retraining. Environment variables `BDA_DASHBOARD_DATA`, `BDA_DASHBOARD_MODEL`, `BDA_DASHBOARD_SCORED` and `BDA_DASHBOARD_ALERTS` force a specific file. The Overview page shows which transactions file is in use. With these files, `scripts/measure_memory.py --deploy` measures a peak of about 605 MB RSS across all six pages.
 
 `scripts/measure_memory.py` drives the app through all six pages with Streamlit's `AppTest` and reports the transactions frame's memory and the process RSS (`--deploy` forces the `deploy/` copies).
 
@@ -471,7 +472,7 @@ Generated data and model files are excluded by `.gitignore`, except the slim cop
 
 `src/nosql/store_analytics.py` writes two collections:
 
-- **`fraud_alerts`**: the 500 highest-probability `fraudTest.csv` transactions. Each is a document with nested `customer` and `merchant` sub-documents, the model probability and decision, and the actual label.
+- **`fraud_alerts`**: every `fraudTest.csv` transaction with fraud probability ≥ `ALERT_MIN_PROBABILITY` (0.5 by default, env `BDA_ALERT_MIN_PROB`), i.e. the Elevated and High risk bands. A probability floor is used rather than a top-N cut, because the highest few hundred scores are almost all fraud and would show about 100% precision whatever the filters. Each is a document with nested `customer` and `merchant` sub-documents, the model probability and decision, and the actual label.
 - **`category_analytics`**: the Spark category summary.
 
 It then runs a `find().sort().limit()` query and a `$group` aggregation pipeline.
@@ -492,7 +493,7 @@ With no URI set and nothing listening on `mongodb://localhost:27017`, the in-mem
 .\venv\Scripts\python.exe -m pytest -q
 ```
 
-The suite has 49 tests:
+Test files:
 
 | File | Covers |
 |---|---|
@@ -502,6 +503,7 @@ The suite has 49 tests:
 | `test_data_pipeline.py` | Kaggle CSV headers and labels, shared schema, train/test separation and time order, chronological split, consistency of validation and test metrics |
 | `test_inference.py` | Scoring, one-hot alignment, input validation, mixed batches, bundle schema/threshold, stale-model rejection |
 | `test_mongo_client.py` | MongoDB / mongomock connection policy |
+| `test_alerts.py` | Alert loading (inclusive probability floor, reload replaces, invalid floor), alert statistics over all matches rather than table rows, category aggregation, stale-collection detection, and a regression check that the alerts reproduce the test confusion matrix |
 | `test_dashboard.py` | Every page renders without errors, prediction form, invalid-date rejection, alert query, train/test selector, no stale synthetic-data text |
 
 Tests that need the Kaggle files, the cleaned Parquet, or the trained model skip themselves when those are missing. The Spark scripts and full training runs are not exercised by pytest. They are verified by running them, and `verify_model.py` checks the saved model's outputs.

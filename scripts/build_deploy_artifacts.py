@@ -7,6 +7,10 @@ gitignored full pipeline outputs:
                                              only the dashboard's columns, compact dtypes, zstd
     deploy/scored_test_transactions.parquet  results/fraud_detection/scored_test_transactions.parquet,
                                              recompressed with zstd (same rows and columns)
+    deploy/fraud_alerts.parquet              the scored test rows with fraud_probability >=
+                                             cfg.ALERT_MIN_PROBABILITY, only the columns the
+                                             fraud_alerts documents use; the floor is stored in
+                                             the Parquet schema metadata
     deploy/best_model.joblib                 results/models/best_model.joblib, copied unchanged
 
 results/metrics/model_comparison.json is already committed, so it is not
@@ -24,14 +28,18 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import pandas as pd
+import pyarrow as pa
+import pyarrow.parquet as pq
 
 from config import config as cfg
 from src.dashboard.data import DASHBOARD_COLUMNS, apply_dashboard_dtypes
+from src.nosql.store_analytics import ALERT_COLUMNS, ALERT_FLOOR_METADATA_KEY, alerts_file_floor
 
 MAX_BYTES = 95 * 1024 ** 2
 OUT_TRANSACTIONS = cfg.DEPLOY_DIR / "transactions_dashboard.parquet"
 OUT_SCORED = cfg.DEPLOY_DIR / "scored_test_transactions.parquet"
 OUT_MODEL = cfg.DEPLOY_DIR / "best_model.joblib"
+OUT_ALERTS = cfg.DEPLOY_DIR / "fraud_alerts.parquet"
 
 
 def _mb(path: Path) -> str:
@@ -81,6 +89,26 @@ def build_scored(source: Path = cfg.SCORED_TEST_FILE, out: Path = OUT_SCORED) ->
     return back
 
 
+def build_alerts(source: Path = cfg.SCORED_TEST_FILE, out: Path = OUT_ALERTS,
+                 floor: float = cfg.ALERT_MIN_PROBABILITY) -> pd.DataFrame:
+    if not 0.0 <= floor <= 1.0:
+        raise ValueError(f"ALERT_MIN_PROBABILITY must be between 0 and 1, got {floor}")
+    src = pd.read_parquet(source)
+    expected = src.loc[src["fraud_probability"] >= floor, ALERT_COLUMNS].reset_index(drop=True)
+    table = pa.Table.from_pandas(expected, preserve_index=False)
+    table = table.replace_schema_metadata({**(table.schema.metadata or {}),
+                                           ALERT_FLOOR_METADATA_KEY: repr(float(floor)).encode()})
+    out.parent.mkdir(parents=True, exist_ok=True)
+    pq.write_table(table, out, compression="zstd", compression_level=9)
+
+    back = pd.read_parquet(out)
+    assert alerts_file_floor(out) == floor, "floor metadata missing or wrong"
+    assert len(back) == int((src["fraud_probability"] >= floor).sum()), "alert row count differs"
+    assert back[cfg.LABEL_COL].sum() == expected[cfg.LABEL_COL].sum(), "alert fraud count differs"
+    assert _same_values(expected, back), "deploy alerts differ from the filtered source"
+    return back
+
+
 def main():
     for path in (cfg.CLEANED_TRANSACTIONS_FILE, cfg.SCORED_TEST_FILE, cfg.MODEL_FILE):
         if not path.exists():
@@ -101,7 +129,12 @@ def main():
     assert OUT_MODEL.read_bytes() == cfg.MODEL_FILE.read_bytes()
     print(f"{OUT_MODEL.relative_to(cfg.PROJECT_ROOT)}: {_mb(OUT_MODEL)} (identical copy)")
 
-    for path in (OUT_TRANSACTIONS, OUT_SCORED, OUT_MODEL):
+    alerts = build_alerts()
+    print(f"{OUT_ALERTS.relative_to(cfg.PROJECT_ROOT)}: {len(alerts):,} rows with fraud_probability >= "
+          f"{cfg.ALERT_MIN_PROBABILITY} ({int(alerts[cfg.LABEL_COL].sum()):,} fraud, "
+          f"{int(alerts['predicted_fraud'].sum()):,} predicted fraud), {_mb(OUT_ALERTS)}")
+
+    for path in (OUT_TRANSACTIONS, OUT_SCORED, OUT_MODEL, OUT_ALERTS):
         assert path.stat().st_size < MAX_BYTES, f"{path} is {_mb(path)}, over the 95 MB limit"
     print("All deploy artifacts match their sources and are under 95 MB.")
 

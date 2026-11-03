@@ -36,10 +36,13 @@ from src.fraud_detection import inference as inf
 
 SPLIT_LABELS = {"train": "Training (fraudTrain.csv)", "test": "Test (fraudTest.csv)"}
 
-# Only the columns the dashboard uses are loaded (1.85M rows).
+# Only the columns the dashboard uses are loaded (1.85M rows). trans_num is
+# left out (~70 MB of unique strings): the Fraud alerts page reads it from the
+# alert documents, and the example transactions are keyed by
+# (timestamp, card, amount), which is unique within fraudTest.csv.
 DASHBOARD_COLUMNS = [
     cfg.TIMESTAMP_COL, cfg.CARD_NUM_COL, cfg.MERCHANT_COL, cfg.CATEGORY_COL, cfg.AMOUNT_COL, cfg.GENDER_COL,
-    cfg.STATE_COL, cfg.LAT_COL, cfg.LONG_COL, cfg.CITY_POP_COL, cfg.DOB_COL, cfg.TRANSACTION_ID_COL,
+    cfg.STATE_COL, cfg.LAT_COL, cfg.LONG_COL, cfg.CITY_POP_COL, cfg.DOB_COL,
     cfg.MERCH_LAT_COL, cfg.MERCH_LONG_COL, cfg.LABEL_COL, "txn_hour", "is_high_value", cfg.SPLIT_COL,
 ]
 # Low-cardinality text columns are held as pandas categoricals (1-2 byte codes
@@ -52,6 +55,7 @@ SPLIT_ORDER = ["train", "test"]
 TRANSACTIONS_FILE = cfg.DASHBOARD_TRANSACTIONS_FILE
 MODEL_FILE = cfg.DASHBOARD_MODEL_FILE
 SCORED_FILE = cfg.DASHBOARD_SCORED_FILE
+ALERTS_FILE = cfg.DASHBOARD_ALERTS_FILE
 USING_DEPLOY_DATA = TRANSACTIONS_FILE != cfg.CLEANED_TRANSACTIONS_FILE
 
 HIVE_DIR = cfg.RESULTS_DIR / "hive_analytics"
@@ -175,22 +179,36 @@ def load_test_set_scores():
     return scored[cfg.LABEL_COL].to_numpy(), scored["fraud_probability"].to_numpy()
 
 
+EXAMPLE_KEY_COLUMNS = [cfg.TIMESTAMP_COL, cfg.CARD_NUM_COL, cfg.AMOUNT_COL]
+
+
+def find_example_row(df: pd.DataFrame, key: dict) -> pd.Series:
+    """The fraudTest.csv row of the transactions frame matching an example key."""
+    mask = df[cfg.SPLIT_COL].astype(str) == "test"
+    for col, value in key.items():
+        mask &= df[col] == value
+    return df[mask].iloc[0]
+
+
 @st.cache_data(show_spinner="Selecting example transactions...")
 def example_transaction_ids() -> dict:
-    """{"fraud": trans_num, "legit": trans_num} for the Fraud detection page's
+    """{"fraud": key, "legit": key} for the Fraud detection page's
     example buttons, fixed so a demo behaves the same every time: the earliest
     fraudTest.csv fraud the model flags (predicted_fraud = 1; 78% of test fraud
     is), and the earliest legitimate transaction it scores Low. Only rows
-    whose state the model was trained on, so the form reproduces the score."""
+    whose state the model was trained on, so the form reproduces the score.
+    A key is {timestamp, card number, amount}: unique within fraudTest.csv and
+    present in the transactions frame, which has no trans_num column."""
     _require(SCORED_FILE)
-    cols = [cfg.TRANSACTION_ID_COL, cfg.TIMESTAMP_COL, cfg.STATE_COL, cfg.LABEL_COL, "fraud_probability", "predicted_fraud"]
+    cols = [cfg.TRANSACTION_ID_COL, cfg.CARD_NUM_COL, cfg.AMOUNT_COL, cfg.TIMESTAMP_COL, cfg.STATE_COL, cfg.LABEL_COL, "fraud_probability", "predicted_fraud"]
     s = pd.read_parquet(SCORED_FILE, columns=cols).sort_values([cfg.TIMESTAMP_COL, cfg.TRANSACTION_ID_COL])
     _release_arrow_memory()
     bundle, threshold = load_model()
     s = s[s[cfg.STATE_COL].astype(str).isin(inf.known_categorical_values(bundle)["state"])]
     fraud = s[(s[cfg.LABEL_COL] == 1) & (s["predicted_fraud"] == 1)]
     legit = s[(s[cfg.LABEL_COL] == 0) & (s["fraud_probability"] < inf.elevated_cutoff(threshold))]
-    return {"fraud": fraud[cfg.TRANSACTION_ID_COL].iloc[0], "legit": legit[cfg.TRANSACTION_ID_COL].iloc[0]}
+    key = lambda rows: {col: rows[col].iloc[0] for col in EXAMPLE_KEY_COLUMNS}  # noqa: E731
+    return {"fraud": key(fraud), "legit": key(legit)}
 
 
 @st.cache_data
@@ -213,25 +231,81 @@ def load_alerts_collection():
     from src.nosql.store_analytics import load_fraud_alerts
 
     db, backend = get_mongo_db()
-    if db["fraud_alerts"].count_documents({}) == 0:
-        _require(SCORED_FILE)
-        load_fraud_alerts(db, SCORED_FILE)
+    if db["fraud_alerts"].count_documents({}) == 0 or _alerts_collection_is_stale(db["fraud_alerts"]):
+        source = alerts_source_file()
+        _require(source)
+        load_fraud_alerts(db, source)
         _release_arrow_memory()
     return db["fraud_alerts"], backend
 
 
-def query_alerts(collection, categories, states, min_probability, actual_label, sort_field, descending, limit):
-    """Builds and runs a MongoDB find() query; returns (DataFrame, query dict)."""
+def alerts_source_file() -> Path:
+    """deploy/fraud_alerts.parquet (5k rows, small) when it exists and was built
+    with the current ALERT_MIN_PROBABILITY; otherwise the full scored test file
+    (555k rows, read then filtered). A floor mismatch falls back rather than
+    showing alerts for the wrong floor."""
+    from src.nosql.store_analytics import alerts_file_floor
+    if alerts_file_floor(ALERTS_FILE) == cfg.ALERT_MIN_PROBABILITY:
+        return ALERTS_FILE
+    return SCORED_FILE
+
+
+def _alerts_collection_is_stale(collection) -> bool:
+    """True if the collection was filled by an older loader (the old top-500
+    version only holds scores near 1.0). The current loader stores every
+    score >= ALERT_MIN_PROBABILITY, so its lowest score sits close to that
+    floor. Collections that are not stale are left untouched."""
+    lowest = collection.find_one({}, {"predicted_fraud_probability": 1}, sort=[("predicted_fraud_probability", 1)])
+    if lowest is None:
+        return True
+    return lowest["predicted_fraud_probability"] > cfg.ALERT_MIN_PROBABILITY + 0.05
+
+
+def build_alert_query(categories=None, states=None, min_probability=0.0, actual_label=None,
+                      predicted_fraud_only=False) -> dict:
+    """MongoDB filter for the alerts page. predicted_fraud_only keeps only the
+    transactions the model flags at its decision threshold (High risk)."""
     query = {"predicted_fraud_probability": {"$gte": float(min_probability)}}
+    if predicted_fraud_only:
+        query["predicted_fraud"] = 1
     if categories:
         query["category"] = {"$in": list(categories)}
     if states:
         query["customer.state"] = {"$in": list(states)}
     if actual_label is not None:
         query["actual_label"] = int(actual_label)
+    return query
 
+
+def query_alerts(collection, query, sort_field, descending, limit) -> pd.DataFrame:
+    """Runs find().sort().limit() and returns the matching documents (at most `limit`)."""
     cursor = collection.find(query, {"_id": 0}).sort(sort_field, -1 if descending else 1).limit(int(limit))
     docs = list(cursor)
-    if not docs:
-        return pd.DataFrame(), query
-    return pd.json_normalize(docs), query
+    return pd.json_normalize(docs) if docs else pd.DataFrame()
+
+
+def alert_stats(collection, query) -> dict:
+    """Counts over ALL documents matching the query, independent of the table's
+    row limit: matched alerts, how many are actually fraud, and precision."""
+    matched = collection.count_documents(query)
+    if "actual_label" in query:
+        fraud = matched if query["actual_label"] == 1 else 0
+    else:
+        fraud = collection.count_documents({**query, "actual_label": 1})
+    return {"matched": matched, "fraud": fraud, "precision": (fraud / matched) if matched else None}
+
+
+def alert_category_pipeline(query) -> list:
+    return [
+        {"$match": query},
+        {"$group": {"_id": "$category", "alerts": {"$sum": 1}, "actual_fraud": {"$sum": "$actual_label"}}},
+        {"$sort": {"alerts": -1}},
+    ]
+
+
+def alerts_by_category(collection, query) -> pd.DataFrame:
+    """MongoDB aggregation pipeline: alerts and actual fraud per category, over all matches."""
+    rows = list(collection.aggregate(alert_category_pipeline(query)))
+    if not rows:
+        return pd.DataFrame(columns=["category", "alerts", "actual_fraud"])
+    return pd.DataFrame(rows).rename(columns={"_id": "category"})

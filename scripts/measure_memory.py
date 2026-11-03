@@ -44,6 +44,7 @@ def main():
         os.environ["BDA_DASHBOARD_DATA"] = str(ROOT / "deploy" / "transactions_dashboard.parquet")
         os.environ["BDA_DASHBOARD_MODEL"] = str(ROOT / "deploy" / "best_model.joblib")
         os.environ["BDA_DASHBOARD_SCORED"] = str(ROOT / "deploy" / "scored_test_transactions.parquet")
+        os.environ["BDA_DASHBOARD_ALERTS"] = str(ROOT / "deploy" / "fraud_alerts.parquet")
 
     proc = psutil.Process()
     rss = lambda: proc.memory_info().rss / MB  # noqa: E731
