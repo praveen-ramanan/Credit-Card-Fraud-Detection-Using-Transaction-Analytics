@@ -1,0 +1,9 @@
+# Offline batch pipeline + tests: everything in requirements.txt, plus the
+# packages used only by scripts/run_pipeline.ps1, the test suite and the
+# measurement scripts. Not installed by Streamlit Community Cloud.
+-r requirements.txt
+
+pyspark==4.2.0            # Spark DataFrame + Spark SQL (Hive-style) stages
+matplotlib==3.11.2        # src/visualization/plots.py
+pytest==9.1.1
+psutil==7.2.2             # scripts/measure_memory.py

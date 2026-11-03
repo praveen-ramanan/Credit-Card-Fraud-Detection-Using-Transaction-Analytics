@@ -1,32 +1,22 @@
-# Core data handling
-pandas>=2.0.0
-numpy>=1.24.0
-pyarrow>=14.0.0            # Parquet engine for pandas + Spark interop
+# Dashboard runtime (app.py) - what Streamlit Community Cloud installs.
+# Pinned to the versions the model and artifacts were built and verified with:
+# a different scikit-learn/XGBoost can fail to load results/models/best_model.joblib.
+# Offline pipeline (Spark, charts, tests): pip install -r requirements-pipeline.txt
 
-# Machine learning
-scikit-learn>=1.3.0
-imbalanced-learn>=0.11.0
-xgboost>=2.0.0
+# Data handling
+pandas==3.0.5
+numpy==2.4.6
+pyarrow==25.0.1           # Parquet engine
 
-# Big Data processing
-pyspark>=3.5.0
+# Model
+scikit-learn==1.9.1
+xgboost==3.2.0
+joblib==1.6.0
 
 # NoSQL
-pymongo>=4.6.0
-mongomock>=4.1.0          # zero-install local fallback for MongoDB demo
-
-# Visualization
-matplotlib>=3.7.0
-seaborn>=0.12.0
-plotly>=5.18.0
+pymongo==4.18.1
+mongomock==4.3.0          # in-memory fallback when no MongoDB is configured
 
 # Dashboard
-streamlit>=1.46.0         # app.py (uses the width="stretch" API)
-
-# Utilities
-pyyaml>=6.0
-joblib>=1.3.0
-tqdm>=4.66.0
-
-# Testing
-pytest>=7.4.0
+streamlit==1.65.0
+plotly==7.1.0
