@@ -18,8 +18,9 @@ better than a single relational instance - relevant even though this
 project itself runs at a small demo scale.
 
 This script stores two kinds of documents:
-    1. fraud_alerts       - one flexible document per highest-scored
-                             fraudTest.csv transaction (out-of-sample scores
+    1. fraud_alerts       - one flexible document per fraudTest.csv
+                             transaction scoring >= ALERT_MIN_PROBABILITY
+                             (0.5 by default; out-of-sample scores
                              from src/fraud_detection/train_model.py), with a
                              nested customer/merchant sub-document and both
                              the model's prediction and the actual label.
@@ -37,6 +38,26 @@ import pandas as pd
 
 from config import config as cfg
 from src.nosql.mongo_client import get_mongo_db
+
+# Columns _row_to_alert_doc() reads; build_deploy_artifacts.py keeps only these
+# in the precomputed deploy/fraud_alerts.parquet.
+ALERT_COLUMNS = [
+    cfg.TRANSACTION_ID_COL, cfg.TIMESTAMP_COL, cfg.AMOUNT_COL, cfg.CATEGORY_COL, cfg.CARD_NUM_COL, cfg.CITY_COL,
+    cfg.STATE_COL, "customer_age", cfg.MERCHANT_COL, "customer_merchant_distance_km", cfg.LABEL_COL,
+    "fraud_probability", "predicted_fraud",
+]
+# Parquet schema metadata key holding the floor a precomputed alerts file was built with.
+ALERT_FLOOR_METADATA_KEY = b"bda_alert_min_probability"
+
+
+def alerts_file_floor(path: Path):
+    """The floor a precomputed alerts file was filtered with, or None for a
+    plain scored file (no metadata key) or a missing file."""
+    if not Path(path).exists():
+        return None
+    import pyarrow.parquet as pq
+    value = (pq.read_schema(path).metadata or {}).get(ALERT_FLOOR_METADATA_KEY)
+    return float(value) if value is not None else None
 
 
 def _row_to_alert_doc(row: pd.Series) -> dict:
@@ -58,17 +79,37 @@ def _row_to_alert_doc(row: pd.Series) -> dict:
         "actual_label": int(row.get(cfg.LABEL_COL, 0)),
         "predicted_fraud_probability": float(row.get("fraud_probability", 0.0)),
         "predicted_fraud": int(row.get("predicted_fraud", 0)),
-        "flagged_reason": "above_decision_threshold" if row.get("predicted_fraud", 0) else "high_model_score",
+        "flagged_reason": "above_decision_threshold" if row.get("predicted_fraud", 0) else "elevated_score",
     }
 
 
-def load_fraud_alerts(db, scored_file: Path = cfg.SCORED_TEST_FILE, top_n: int = 500):
-    """Load the highest fraud-probability test transactions as alert documents."""
+def load_fraud_alerts(db, scored_file: Path = cfg.SCORED_TEST_FILE, min_probability: float = None):
+    """Load every test transaction with fraud_probability >= min_probability
+    (default cfg.ALERT_MIN_PROBABILITY) as an alert document.
+
+    A probability floor is used instead of a top-N cut on purpose: the N
+    highest scores are almost all real fraud, so a top-N collection shows
+    ~100% precision whatever the filters. With a floor, the documents that
+    have predicted_fraud == 1 are exactly the transactions the model flags at
+    its decision threshold, and their precision equals the test precision in
+    model_comparison.json.
+
+    scored_file may be the full scored test file or the precomputed
+    deploy/fraud_alerts.parquet; filtering the latter again is a no-op, but it
+    must not have been built with a higher floor (rows would be missing)."""
+    if min_probability is None:
+        min_probability = cfg.ALERT_MIN_PROBABILITY
+    if not 0.0 <= float(min_probability) <= 1.0:
+        raise ValueError(f"min_probability must be between 0 and 1, got {min_probability}")
     if not scored_file.exists():
         print(f"[nosql] {scored_file} not found - run fraud detection scoring first. Skipping alerts load.")
         return 0
+    file_floor = alerts_file_floor(scored_file)
+    if file_floor is not None and file_floor > float(min_probability):
+        raise ValueError(f"{scored_file} only holds scores >= {file_floor}, so it cannot serve a floor of {min_probability}")
 
-    df = pd.read_parquet(scored_file).nlargest(top_n, "fraud_probability")
+    df = pd.read_parquet(scored_file)
+    df = df[df["fraud_probability"] >= float(min_probability)]
 
     docs = [_row_to_alert_doc(row) for _, row in df.iterrows()]
     collection = db["fraud_alerts"]
@@ -128,7 +169,8 @@ def run():
     category_csv = cfg.RESULTS_DIR / "spark_output" / "category_summary.csv"
 
     n_alerts = load_fraud_alerts(db)
-    print(f"[nosql] Loaded {n_alerts:,} documents into 'fraud_alerts'")
+    print(f"[nosql] Loaded {n_alerts:,} documents into 'fraud_alerts' "
+          f"(fraud_probability >= {cfg.ALERT_MIN_PROBABILITY})")
 
     n_cat = load_category_analytics(db, category_csv)
     print(f"[nosql] Loaded {n_cat:,} documents into 'category_analytics'")

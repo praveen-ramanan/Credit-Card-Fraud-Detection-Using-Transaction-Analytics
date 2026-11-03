@@ -1,15 +1,23 @@
 # Deploying the dashboard on Streamlit Community Cloud
 
 The deployed app is the **serving layer** only: `app.py` reads the committed
-files in `deploy/` (cleaned transactions, saved model, test-set scores) and
+files in `deploy/` (cleaned transactions, saved model, test-set scores,
+precomputed fraud alerts) and
 the committed `results/` outputs. No Spark, Hadoop, Hive or model training
 runs in the cloud. Those are the offline batch layer, run locally with
 `scripts/run_pipeline.ps1`.
 
 Streamlit Community Cloud installs `requirements.txt` (dashboard runtime
 only, pinned) from the repository root. Measured locally with
-`scripts/measure_memory.py --deploy`, the app peaks at about 670 MB RSS
+`scripts/measure_memory.py --deploy`, the app peaks at about 605 MB RSS
 across all six pages, under Community Cloud's ~690 MB guaranteed memory.
+
+The four `deploy/` files are written by `scripts/build_deploy_artifacts.py`:
+`transactions_dashboard.parquet` (45.5 MB, no `trans_num` column),
+`scored_test_transactions.parquet` (19.2 MB), `fraud_alerts.parquet`
+(0.3 MB, the 5,321 test rows scoring at least 0.5) and `best_model.joblib`
+(1.4 MB). `BDA_DASHBOARD_DATA`, `BDA_DASHBOARD_MODEL`, `BDA_DASHBOARD_SCORED`
+and `BDA_DASHBOARD_ALERTS` force a specific file.
 
 ## 1. Push the branch and merge it into `main`
 
@@ -19,9 +27,9 @@ From the project root:
 git push -u origin deploy-streamlit
 ```
 
-GitHub prints a warning that `deploy/transactions_dashboard.parquet` (78 MB)
-is larger than its recommended 50 MB. That warning is expected. The hard
-limit is 100 MB, and no file in the repository is over 95 MB.
+Every file in `deploy/` is under GitHub's recommended 50 MB (the largest,
+`transactions_dashboard.parquet`, is 45.5 MB), so the push prints no
+large-file warning. The build script fails if any file reaches 95 MB.
 
 Then merge, either through a pull request on GitHub
 (`deploy-streamlit` -> `main`) or locally:
@@ -79,9 +87,12 @@ BDA_MONGO_DB = "fraud_analytics"
 - In Atlas, allow connections from anywhere (**Network Access** ->
   `0.0.0.0/0`), because Community Cloud has no fixed outbound IP. Use a
   database user with access to this database only.
-- If the `fraud_alerts` collection is empty, the app fills it with the 500
-  highest-scored test transactions on first use (the same loader as
-  `src/nosql/store_analytics.py`).
+- If the `fraud_alerts` collection is empty, or was filled by the old top-500
+  loader, the app fills it with every test transaction scoring at least
+  `ALERT_MIN_PROBABILITY` (0.5) on first use (the same loader as
+  `src/nosql/store_analytics.py`), from `deploy/fraud_alerts.parquet`, or from
+  the full scored file if that precomputed file is missing or was built with
+  a different floor.
 - With `BDA_MONGO_URI` set, an unreachable server is shown as an error on the
   Fraud alerts page. The app never falls back to mongomock silently. The page
   shows which backend is in use.
@@ -109,8 +120,8 @@ there is no download at startup.
 
 | Symptom in the app or log | Likely cause | Fix |
 |---|---|---|
-| "Required pipeline output is missing ... `deploy/...`" | `deploy/` files not pushed | Check `git ls-files deploy` lists all three files and that `main` contains them |
-| "This app has gone over its resource limits" | Memory | Reboot. If it repeats, check the log; the next step is dropping the 71 MB `trans_num` column from the dataset |
+| "Required pipeline output is missing ... `deploy/...`" | `deploy/` files not pushed | Check `git ls-files deploy` lists all four files and that `main` contains them |
+| "This app has gone over its resource limits" | Memory | Reboot. If it repeats, check the log and compare with `scripts/measure_memory.py --deploy` locally |
 | pip error or very slow build on `xgboost` | Large Linux wheel (installs NVIDIA NCCL as a dependency) | Replace `xgboost==3.2.0` with `xgboost-cpu==3.2.0` in `requirements.txt` |
 | `StaleModelError` / model load error | Package versions differ from the pins | Check that Python 3.11 was selected and `requirements.txt` was not changed |
 | Fraud alerts: "Could not reach the MongoDB server configured in BDA_MONGO_URI" | Atlas network access or credentials | Allow `0.0.0.0/0`, check user/password, reboot |

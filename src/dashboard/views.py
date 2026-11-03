@@ -282,8 +282,7 @@ EXAMPLE_NOTES = {"fraud": "the earliest fraud the model flags", "legit": "the ea
 
 
 def _load_example(df, kind: str):
-    trans_num = data.example_transaction_ids()[kind]
-    row = df[df[cfg.TRANSACTION_ID_COL] == trans_num].iloc[0]
+    row = data.find_example_row(df, data.example_transaction_ids()[kind])
     fraud = kind == "fraud"
     known = inf.known_categorical_values(data.load_model()[0])
     ts = row[cfg.TIMESTAMP_COL]
@@ -294,7 +293,8 @@ def _load_example(df, kind: str):
         "f_dob": pd.Timestamp(row[cfg.DOB_COL]).date(), "f_city_pop": int(row[cfg.CITY_POP_COL]),
         "f_lat": float(row[cfg.LAT_COL]), "f_long": float(row[cfg.LONG_COL]),
         "f_merch_lat": float(row[cfg.MERCH_LAT_COL]), "f_merch_long": float(row[cfg.MERCH_LONG_COL]),
-        "f_example": f"`{row[cfg.TRANSACTION_ID_COL]}` from fraudTest.csv (actual label: {'fraud' if fraud else 'legitimate'}; "
+        "f_example": f"in fraudTest.csv at {ts:%Y-%m-%d %H:%M:%S}, amount {float(row[cfg.AMOUNT_COL]):,.2f} "
+                     f"(actual label: {'fraud' if fraud else 'legitimate'}; "
                      f"{EXAMPLE_NOTES[kind]})",
     })
 
@@ -497,53 +497,74 @@ def render_alerts():
         st.error(f"MongoDB is not available, so no fraud alerts can be shown. {e}")
         return
     total = collection.count_documents({})
+    flagged_total = collection.count_documents({"predicted_fraud": 1})
+    threshold = data.load_model()[1]
+    floor = cfg.ALERT_MIN_PROBABILITY
     st.markdown(f"**Backend:** {'MongoDB' if backend == 'mongodb' else 'mongomock (in-memory demo)'}")
     if backend == "mongodb":
         st.success(f"Connected to MongoDB at `{cfg.MONGO_DB_NAME}.fraud_alerts` ({total:,} alert documents).")
     else:
         st.info(f"BDA_MONGO_URI is not set and no MongoDB server answered at `{cfg.MONGO_URI}`, so this page uses "
-                f"the in-memory **mongomock** fallback (set `BDA_MONGO_FALLBACK=0` to disable it), "
-                f"loaded with the {total:,} top-scored alerts by `src/nosql/store_analytics.py`.")
-    st.caption("Alerts are the highest model scores among **fraudTest.csv** transactions (out-of-sample). "
-               "`predicted_fraud` is the model's decision at the validation-chosen threshold; `actual_label` is the "
-               "dataset's real `is_fraud` label.")
+                f"the in-memory **mongomock** fallback (set `BDA_MONGO_FALLBACK=0` to disable it), loaded by "
+                f"`src/nosql/store_analytics.py`.")
+    st.caption(f"The collection holds every **fraudTest.csv** transaction (out-of-sample) with a model score of at least "
+               f"{floor:.2f}: {total:,} documents, of which {flagged_total:,} are at or above the decision threshold "
+               f"{threshold:.3f} (`predicted_fraud` = 1). `actual_label` is the dataset's real `is_fraud` label, so "
+               f"*Alert precision* is the share of matching alerts that really are fraud.")
 
     cats = sorted(collection.distinct("category"))
     states = sorted(collection.distinct("customer.state"))
-    c = st.columns(4)
-    sel_cats = c[0].multiselect("Category", cats)
-    sel_states = c[1].multiselect("State", states)
-    label = c[2].selectbox("Actual label (is_fraud)", ["All", "Fraud", "Legitimate"])
-    min_p = c[3].slider("Min. fraud probability", 0.0, 1.0, 0.0, 0.01)
+    bands = {f"High: predicted fraud (score ≥ {threshold:.3f})": True,
+             f"High + Elevated (score ≥ {floor:.2f})": False}
+    c = st.columns([1.3, 1, 1, 1, 1])
+    band = c[0].selectbox("Risk band", list(bands), key="alert_band")
+    sel_cats = c[1].multiselect("Category", cats, key="alert_categories")
+    sel_states = c[2].multiselect("State", states, key="alert_states")
+    label = c[3].selectbox("Actual label (is_fraud)", ["All", "Fraud", "Legitimate"], key="alert_label")
+    if floor < 1.0:   # st.slider raises if min_value == max_value
+        min_p = c[4].slider("Min. fraud probability", floor, 1.0, floor, 0.01, key="alert_min_p")
+    else:
+        min_p = floor
     c = st.columns(3)
     sort_labels = {"Fraud probability": "predicted_fraud_probability", "Amount": "amount", "Timestamp": "timestamp"}
-    sort = c[0].selectbox("Sort by", list(sort_labels))
-    descending = c[1].radio("Order", ["Descending", "Ascending"], horizontal=True) == "Descending"
-    limit = c[2].number_input("Max rows", 10, 5000, 200, 10)
+    sort = c[0].selectbox("Sort by", list(sort_labels), key="alert_sort")
+    descending = c[1].radio("Order", ["Descending", "Ascending"], horizontal=True, key="alert_order") == "Descending"
+    limit = c[2].number_input("Max rows in table", 10, 5000, 200, 10, key="alert_limit")
 
     actual = {"All": None, "Fraud": 1, "Legitimate": 0}[label]
-    alerts, query = data.query_alerts(collection, sel_cats, sel_states, min_p, actual, sort_labels[sort], descending, limit)
-    with st.expander("MongoDB query"):
-        st.code(f"db.fraud_alerts.find({json.dumps(query)}).sort({{'{sort_labels[sort]}': {-1 if descending else 1}}}).limit({limit})",
+    query = data.build_alert_query(sel_cats, sel_states, min_p, actual, predicted_fraud_only=bands[band])
+    stats = data.alert_stats(collection, query)
+    with st.expander("MongoDB queries"):
+        st.code(f"db.fraud_alerts.countDocuments({json.dumps(query)})\n"
+                f"db.fraud_alerts.find({json.dumps(query)}).sort({{'{sort_labels[sort]}': {-1 if descending else 1}}}).limit({limit})\n"
+                f"db.fraud_alerts.aggregate({json.dumps(data.alert_category_pipeline(query))})",
                 language="javascript")
-    if alerts.empty:
+    if not stats["matched"]:
         st.warning("No alerts match these filters.")
         return
 
-    precision = alerts["actual_label"].mean()
     c = st.columns(3)
-    c[0].metric("Alerts shown", f"{len(alerts):,}")
-    c[1].metric("Actually fraud (label)", f"{int(alerts['actual_label'].sum()):,}")
-    c[2].metric("Alert precision", f"{precision:.1%}")
+    c[0].metric("Matching alerts", f"{stats['matched']:,}")
+    c[1].metric("Actually fraud (label)", f"{stats['fraud']:,}")
+    c[2].metric("Alert precision", f"{stats['precision']:.1%}")
+    st.caption("These counts cover all matching documents, not only the rows shown in the table. "
+               "Filtering by actual label makes precision 100% or 0% by definition.")
+    if stats["matched"] < 30:
+        st.warning(f"Only {stats['matched']} alerts match, so this precision is not a reliable estimate.")
+
+    alerts = data.query_alerts(collection, query, sort_labels[sort], descending, limit)
+    if stats["matched"] > len(alerts):
+        st.caption(f"Table shows the first {len(alerts):,} of {stats['matched']:,} matching alerts.")
     st.dataframe(alerts, hide_index=True, width="stretch",
                  column_config={"predicted_fraud_probability": st.column_config.ProgressColumn(
                      "fraud probability", min_value=0.0, max_value=1.0, format="%.3f"),
                      "amount": st.column_config.NumberColumn(format="%.2f")})
-    st.download_button("Download alerts (CSV)", alerts.to_csv(index=False), "fraud_alerts.csv", "text/csv")
+    st.download_button("Download table rows (CSV)", alerts.to_csv(index=False), "fraud_alerts.csv", "text/csv")
 
-    by_cat = alerts.groupby("category").agg(alerts=("trans_num", "size"), actual_fraud=("actual_label", "sum")).reset_index()
+    by_cat = data.alerts_by_category(collection, query)
     fig = px.bar(by_cat.sort_values("alerts"), x=["alerts", "actual_fraud"], y="category", orientation="h",
-                 barmode="overlay", title="Alerts by category", color_discrete_sequence=[LEGIT_COLOR, FRAUD_COLOR])
+                 barmode="overlay", title="Alerts by category (all matches, MongoDB aggregation)",
+                 color_discrete_sequence=[LEGIT_COLOR, FRAUD_COLOR])
     _chart(fig.update_layout(xaxis_title="", yaxis_title=""), 420)
 
 

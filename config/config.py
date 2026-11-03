@@ -67,6 +67,13 @@ DASHBOARD_TRANSACTIONS_FILE = _dashboard_artifact("BDA_DASHBOARD_DATA", CLEANED_
 DASHBOARD_MODEL_FILE = _dashboard_artifact("BDA_DASHBOARD_MODEL", MODEL_FILE, "best_model.joblib")
 DASHBOARD_SCORED_FILE = _dashboard_artifact("BDA_DASHBOARD_SCORED", SCORED_TEST_FILE,
                                             "scored_test_transactions.parquet")
+# Precomputed fraud_alerts source: the scored test rows with fraud_probability
+# >= ALERT_MIN_PROBABILITY (written by build_deploy_artifacts.py). The pipeline
+# has no full-size equivalent, so only the deploy/ copy (or the env var) exists;
+# the dashboard falls back to DASHBOARD_SCORED_FILE when it is missing or was
+# built with a different floor.
+DASHBOARD_ALERTS_FILE = _dashboard_artifact("BDA_DASHBOARD_ALERTS", DEPLOY_DIR / "fraud_alerts.parquet",
+                                            "fraud_alerts.parquet")
 
 # ---------------------------------------------------------------------------
 # Canonical transaction schema
@@ -112,6 +119,13 @@ MONGO_URI_CONFIGURED = bool(os.environ.get("BDA_MONGO_URI"))
 MONGO_URI = os.environ.get("BDA_MONGO_URI") or "mongodb://localhost:27017"
 MONGO_DB_NAME = os.environ.get("BDA_MONGO_DB", "fraud_analytics")
 MONGO_ALLOW_MOCK_FALLBACK = os.environ.get("BDA_MONGO_FALLBACK", "1").strip().lower() not in ("0", "false", "no")
+
+# Fraud alerts: every fraudTest.csv transaction scoring at least this
+# probability is stored in the 'fraud_alerts' collection. 0.5 covers the
+# Elevated (0.5 to threshold) and High (>= threshold) risk bands. Storing all
+# of them, not just the top-N scores, is what keeps the alert precision shown
+# on the dashboard consistent with model_comparison.json.
+ALERT_MIN_PROBABILITY = float(os.environ.get("BDA_ALERT_MIN_PROB", "0.5"))
 
 # ---------------------------------------------------------------------------
 # Spark settings

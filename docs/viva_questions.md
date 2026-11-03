@@ -149,6 +149,9 @@ implementing the same API - if no server is reachable, so the exact same
 code path runs either way. Development/testing here used the
 `mongomock` fallback.
 
+**Q: Why does the `fraud_alerts` collection use a probability floor (≥ 0.5) instead of the top-N scores?**
+The top few hundred scores are almost all real fraud, so a top-N collection showed ~100% alert precision whatever the filters; storing every test transaction above a floor keeps the model's own alerts (score ≥ threshold) complete, so the page reproduces the real test precision (2,050 alerts, 1,666 fraud = 81.3%).
+
 ## Machine Learning / Fraud Detection
 
 **Q: Why is fraud detection a classification problem, and specifically an imbalanced one?**

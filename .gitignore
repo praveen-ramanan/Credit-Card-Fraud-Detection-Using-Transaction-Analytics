@@ -59,8 +59,9 @@ secrets*
 results/fraud_detection/*.parquet
 
 # Dashboard deploy copies (scripts/build_deploy_artifacts.py): only these
-# three files are committed; anything else in deploy/ stays local.
+# four files are committed; anything else in deploy/ stays local.
 deploy/*
 !deploy/transactions_dashboard.parquet
 !deploy/scored_test_transactions.parquet
 !deploy/best_model.joblib
+!deploy/fraud_alerts.parquet

@@ -37,8 +37,9 @@ Verify which backend was used from the script's first printed line:
 
 ## What's stored, and why NoSQL fits this data
 
-- **`fraud_alerts`** - one flexible document for each of the 500
-  highest-scored `fraudTest.csv` transactions (out-of-sample scores in
+- **`fraud_alerts`** - one flexible document for each `fraudTest.csv`
+  transaction scoring at least `ALERT_MIN_PROBABILITY` (0.5 by default;
+  out-of-sample scores in
   `results/fraud_detection/scored_test_transactions.parquet`). Each has a
   nested customer sub-document, the model score and decision
   (`predicted_fraud`), and the actual `is_fraud` label (`actual_label`). Alert-style records like this
