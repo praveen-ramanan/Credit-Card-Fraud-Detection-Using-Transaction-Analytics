@@ -134,7 +134,9 @@ Check the live app by hand:
 2. Each page loads without an error: Overview, Transaction analytics, Fraud
    detection, Model performance, Fraud alerts and CSV analysis.
 3. Overview shows the data source `deploy/transactions_dashboard.parquet`, and
-   Fraud alerts shows **Backend: mongomock (in-memory demo)**.
+   Fraud alerts shows the backend in use: **mongomock (in-memory demo)**
+   when no secrets are set, or **MongoDB** with the alert document count
+   when `BDA_MONGO_URI` is set. The live deployment uses MongoDB Atlas.
 4. On Fraud detection, **Load a fraud example** then **Assess transaction**
    gives risk level **High**, and **Load a legitimate example** then **Assess
    transaction** gives **Low**.
