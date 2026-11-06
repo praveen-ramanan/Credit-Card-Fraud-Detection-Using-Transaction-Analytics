@@ -2,6 +2,8 @@
 
 **Semester V Big Data Architecture Mini-Project** · B.Tech AI & Data Science
 
+**Live dashboard:** [credit-card-fraud-detection-using-transaction-analytics-pcxwkc.streamlit.app](https://credit-card-fraud-detection-using-transaction-analytics-pcxwkc.streamlit.app/). It is hosted on Streamlit Community Cloud's free tier, so after a period without visitors it shows a wake-up button and takes about a minute to start.
+
 An end-to-end credit card fraud detection and transaction analytics pipeline built on the Kaggle *Credit Card Transactions Fraud Detection* dataset (1.85 million simulated transactions). It cleans the data and aggregates it with MapReduce. It runs Hive-style SQL analytics through Spark SQL and processes the data with Spark DataFrames. It trains and compares fraud classifiers and stores fraud alerts in MongoDB. The results are presented in static charts and an interactive Streamlit dashboard.
 
 Every stage runs locally on a Windows laptop. Hadoop/HDFS, Hive and a MongoDB server are **not** required for the local run. The project includes the real HiveQL scripts, Hadoop Streaming commands and HDFS ingestion commands for running against a cluster, but these have not been executed against real cluster infrastructure. See [Big Data components](#13-big-data-components).
